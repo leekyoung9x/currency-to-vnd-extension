@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Tự kiểm tra — Currency to VND</title>
+  <style>
+    body { font: 14px/1.6 -apple-system, "Segoe UI", Roboto, Arial, sans-serif; color: #17322e; background: #f4f7f6; margin: 0; }
+    .wrap { max-width: 860px; margin: 0 auto; padding: 28px 22px 48px; }
+    h1 { font-size: 21px; margin: 0 0 4px; }
+    .muted { color: #5b716d; }
+    .card { background: #fff; border: 1px solid #dfe9e6; border-radius: 14px; padding: 18px 20px; margin-top: 14px; }
+    table { width: 100%; border-collapse: collapse; font-size: 13.5px; margin-top: 10px; }
+    th, td { border: 1px solid #dfe9e6; padding: 7px 10px; text-align: left; }
+    th { background: #eef5f3; }
+    .pass { color: #0f766e; font-weight: 700; }
+    .fail { color: #b3261e; font-weight: 700; }
+    .samples p { margin: 8px 0; padding: 8px 12px; background: #f7fbfa; border-radius: 8px; }
+    .btn { background: #0f766e; color: #fff; border: none; border-radius: 9px; padding: 9px 16px; font-size: 14px; font-weight: 600; cursor: pointer; }
+  </style>
+  <link rel="stylesheet" href="../content/content.css" />
+</head>
+<body>
+  <div class="wrap">
+    <h1>Trang tự kiểm tra độc lập (Standalone Self-Check)</h1>
+    <p class="muted">Mở file này trực tiếp trong Chrome (có bật extension) hoặc bấm <strong>Chạy kiểm tra</strong> để đo kiểm bằng logic đóng gói sẵn.</p>
+    <button class="btn" id="run" type="button">Chạy kiểm tra</button>
+
+    <div class="card samples">
+      <h2>Mẫu tiền tệ đa dạng</h2>
+      <p>Giá thường: $3.30 và €15.50 và £12.99</p>
+      <p>Micro-cost AI: $0.000021 và $0.0889 và $0.000010</p>
+      <p>Tỷ lệ token input/output: $0.070/$0.350 và $0.020 / $0.100</p>
+      <p>Khoảng giá: $10 - $20 và $10 ~ $20</p>
+      <p>Âm / tiền tố: -$3.30 và +$10.00 và ~$5.00</p>
+      <p>Phân cách US: $1,234.56 — Phân cách EU: €1.234,56</p>
+      <p>Mã ISO trước/sau: USD 10 và 15.50 EUR và 100 JPY và 10 CAD</p>
+      <p>Ký hiệu kép: C$25.00 và A$30.00 và S$18.50 và HK$88.00</p>
+      <p>Châu Á: ¥1500 và ₩22,000 và ₹999.00 và ฿450.50</p>
+    </div>
+
+    <div class="card">
+      <h2>Kết quả đo kiểm</h2>
+      <div id="summary" class="muted">Chưa chạy.</div>
+      <table>
+        <thead><tr><th>TEST</th><th>EXPECTED</th><th>ACTUAL</th><th>PASS/FAIL</th></tr></thead>
+        <tbody id="rows"></tbody>
+      </table>
+    </div>
+  </div>
+  <script type="module" src="verify.js"></script>
+</body>
+</html>

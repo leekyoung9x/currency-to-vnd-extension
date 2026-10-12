@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Currency to VND</title>
+  <link rel="stylesheet" href="popup.css" />
+</head>
+<body>
+  <header class="head">
+    <div class="brand">
+      <span class="coin">₫</span>
+      <div>
+        <h1>Currency → VND</h1>
+        <p class="sub">Quy đổi tiền tệ trên mọi trang web</p>
+      </div>
+    </div>
+    <label class="switch" title="Bật / tắt tiện ích">
+      <input type="checkbox" id="enabled" checked />
+      <span class="track"><span class="thumb"></span></span>
+    </label>
+  </header>
+
+  <main>
+    <section class="card stats">
+      <div class="stat-line"><span class="dot"></span><span id="statCount">Chưa quét trang này</span></div>
+      <button id="rescan" class="btn ghost" type="button">Quét lại trang</button>
+    </section>
+
+    <section class="card">
+      <h2>Chế độ hiển thị</h2>
+      <div class="modes" role="radiogroup" aria-label="Chế độ hiển thị">
+        <label class="mode">
+          <input type="radio" name="mode" value="append" checked />
+          <span class="mode-body"><strong>Kèm theo</strong><small>$3.30 (≈ 85.800 ₫)</small></span>
+        </label>
+        <label class="mode">
+          <input type="radio" name="mode" value="replace" />
+          <span class="mode-body"><strong>Thay thế</strong><small>85.800 ₫ · hover xem gốc</small></span>
+        </label>
+        <label class="mode">
+          <input type="radio" name="mode" value="hover" />
+          <span class="mode-body"><strong>Tooltip khi hover</strong><small>Giữ nguyên layout</small></span>
+        </label>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Tỷ giá hiện tại</h2>
+      <p class="muted" id="updatedAt">Chưa cập nhật online</p>
+      <div class="rate-grid" id="rateGrid"></div>
+      <div class="row">
+        <button id="refresh" class="btn primary" type="button">Cập nhật online</button>
+        <span class="muted small" id="refreshMsg"></span>
+      </div>
+      <details class="custom">
+        <summary>Tự nhập tỷ giá (ghi đè)</summary>
+        <div class="custom-grid" id="customGrid"></div>
+        <div class="row">
+          <button id="saveCustom" class="btn ghost" type="button">Lưu tỷ giá</button>
+          <button id="resetCustom" class="btn link" type="button">Khôi phục mặc định</button>
+        </div>
+      </details>
+    </section>
+
+    <footer class="foot">
+      <a href="../options/options.html" target="_blank" rel="noopener">Cài đặt chi tiết</a>
+      <span>·</span>
+      <a href="../verify/verify.html" target="_blank" rel="noopener">Trang tự kiểm tra</a>
+    </footer>
+  </main>
+  <script type="module" src="popup.js"></script>
+</body>
+</html>

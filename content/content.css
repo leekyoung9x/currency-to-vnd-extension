@@ -1,0 +1,71 @@
+/* content/content.css — badges, replace style, hover tooltips for VND values. */
+
+.vnd-converted {
+  unicode-bidi: isolate;
+}
+
+.vnd-badge {
+  display: inline-block;
+  margin-left: 4px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: #e6f4f1;
+  color: #0b6b5f;
+  border: 1px solid #bfe3dd;
+  font-size: 0.88em;
+  font-weight: 600;
+  line-height: 1.5;
+  white-space: nowrap;
+  vertical-align: baseline;
+}
+
+.vnd-replace {
+  border-bottom: 1px dashed rgba(11, 107, 95, 0.55);
+  cursor: help;
+  font-weight: 600;
+  color: #0b6b5f;
+}
+
+.vnd-hover {
+  position: relative;
+  border-bottom: 1px dotted rgba(11, 107, 95, 0.65);
+  cursor: help;
+}
+
+.vnd-hover::after {
+  content: attr(data-vnd-tooltip);
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 8px);
+  transform: translateX(-50%) translateY(2px);
+  min-width: max-content;
+  max-width: 280px;
+  padding: 7px 11px;
+  border-radius: 8px;
+  background: #10312c;
+  color: #f2fbf9;
+  font-size: 12.5px;
+  font-weight: 600;
+  line-height: 1.45;
+  text-align: center;
+  white-space: nowrap;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition: opacity 0.15s ease, transform 0.15s ease, visibility 0.15s;
+  z-index: 2147483647;
+}
+
+.vnd-hover:hover::after,
+.vnd-hover:focus-visible::after {
+  opacity: 1;
+  visibility: visible;
+  transform: translateX(-50%) translateY(0);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .vnd-hover::after {
+    transition: none;
+  }
+}

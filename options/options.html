@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Cài đặt — Currency to VND</title>
+  <link rel="stylesheet" href="options.css" />
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <span class="coin">₫</span>
+      <div>
+        <h1>Cài đặt chi tiết</h1>
+        <p>Currency to VND — quy đổi tiền tệ sang Việt Nam Đồng</p>
+      </div>
+    </header>
+
+    <section class="card">
+      <h2>Trạng thái &amp; hiển thị</h2>
+      <label class="row"><input type="checkbox" id="enabled" checked /> <span>Bật tiện ích toàn trang</span></label>
+      <div class="modes">
+        <label><input type="radio" name="mode" value="append" checked /> <span><strong>Kèm theo</strong> — giữ giá gốc, chèn badge VND bên cạnh</span></label>
+        <label><input type="radio" name="mode" value="replace" /> <span><strong>Thay thế</strong> — hiện VND, hover xem giá gốc</span></label>
+        <label><input type="radio" name="mode" value="hover" /> <span><strong>Tooltip khi hover</strong> — không đổi layout</span></label>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Tỷ giá quy đổi (VND / 1 đơn vị)</h2>
+      <p class="muted" id="updatedAt">Chưa cập nhật online</p>
+      <div class="grid" id="rateGrid"></div>
+      <div class="row gap">
+        <button id="refresh" class="btn primary" type="button">Cập nhật online</button>
+        <button id="reset" class="btn ghost" type="button">Khôi phục mặc định</button>
+        <span class="muted" id="msg"></span>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Kiểm tra nhanh</h2>
+      <p class="muted">Nhập một giá tiền bất kỳ để xem kết quả quy đổi với tỷ giá hiện tại.</p>
+      <div class="row gap">
+        <input id="probe" class="text" type="text" value="$3.30" />
+        <button id="probeBtn" class="btn ghost" type="button">Quy đổi</button>
+      </div>
+      <p class="result" id="probeOut">—</p>
+    </section>
+
+    <footer>
+      <a href="../verify/verify.html">Mở trang tự kiểm tra</a>
+    </footer>
+  </div>
+  <script type="module" src="options.js"></script>
+</body>
+</html>
