@@ -21,7 +21,17 @@
     UPDATED_AT: 'vnd_rates_updated_at',
     ENABLED: 'vnd_enabled',
     MODE: 'vnd_display_mode',
+    TABLE_SAFE: 'vnd_table_safe',
   };
+  if (!STORAGE_KEYS.TABLE_SAFE) {
+    // RateUtils.STORAGE_KEYS is frozen: copy instead of mutating.
+    var _keys = {};
+    for (var _k in STORAGE_KEYS) {
+      if (Object.prototype.hasOwnProperty.call(STORAGE_KEYS, _k)) _keys[_k] = STORAGE_KEYS[_k];
+    }
+    _keys.TABLE_SAFE = 'vnd_table_safe';
+    STORAGE_KEYS = _keys;
+  }
 
   var FORBIDDEN_TAGS = Object.freeze(
     new Set(['SCRIPT', 'STYLE', 'NOSCRIPT', 'TEXTAREA', 'INPUT', 'CODE', 'PRE'])
@@ -31,14 +41,14 @@
   var CONVERTED_CLASS = 'vnd-converted';
 
   var DISPLAY_MODES = Object.freeze(['append', 'replace', 'hover']);
-  var DEFAULT_STATE = Object.freeze({ enabled: true, mode: 'append' });
+  var DEFAULT_STATE = Object.freeze({ enabled: true, mode: 'append', tableSafe: true });
 
   var currentRates = {};
   var k;
   for (k in DEFAULT_RATES) {
     if (Object.prototype.hasOwnProperty.call(DEFAULT_RATES, k)) currentRates[k] = DEFAULT_RATES[k];
   }
-  var currentState = { enabled: DEFAULT_STATE.enabled, mode: DEFAULT_STATE.mode };
+  var currentState = { enabled: DEFAULT_STATE.enabled, mode: DEFAULT_STATE.mode, tableSafe: DEFAULT_STATE.tableSafe };
   var debounceTimer = 0;
   var selfMutating = false;
 
@@ -88,6 +98,71 @@
     return false;
   }
 
+  /**
+   * FIX-4: True when the node lives inside a table context (`<td>`, `<th>`,
+   * `<tr>`, `<table>` family, or `[role="cell|gridcell|row|..."]`).
+   * Appending wide inline badges there stretches `whitespace-nowrap`
+   * columns and pushes action buttons (Save/Clear) out of view.
+   */
+  function isInsideTable(node) {
+    var el = null;
+    if (node && node.nodeType === 1) {
+      el = node;
+    } else if (node && node.parentElement) {
+      el = node.parentElement;
+    } else if (node && node.parentNode && node.parentNode.nodeType === 1) {
+      el = node.parentNode;
+    }
+    var cur = el;
+    while (cur && cur.nodeType === 1) {
+      var tag = (cur.tagName || '').toUpperCase();
+      if (tag === 'TD' || tag === 'TH' || tag === 'TR' || tag === 'TABLE' ||
+          tag === 'THEAD' || tag === 'TBODY' || tag === 'TFOOT' ||
+          tag === 'CAPTION' || tag === 'COLGROUP' || tag === 'COL') {
+        return true;
+      }
+      if (cur.getAttribute) {
+        var role = cur.getAttribute('role');
+        if (role) {
+          var rl = String(role).toLowerCase();
+          if (rl === 'cell' || rl === 'gridcell' || rl === 'row' ||
+              rl === 'rowheader' || rl === 'columnheader' ||
+              rl === 'table' || rl === 'grid' || rl === 'treegrid') {
+            return true;
+          }
+        }
+      }
+      cur = cur.parentNode;
+    }
+    return false;
+  }
+
+  /**
+   * FIX-4: True when the node sits under a `truncate` / `overflow: hidden`
+   * context. Inline badges there get clipped to `...`, so table-safe mode
+   * falls back to a zero-width-growth hover tooltip instead.
+   */
+  function isTruncatedContext(node) {
+    var el = null;
+    if (node && node.nodeType === 1) {
+      el = node;
+    } else if (node && node.parentElement) {
+      el = node.parentElement;
+    } else if (node && node.parentNode && node.parentNode.nodeType === 1) {
+      el = node.parentNode;
+    }
+    var cur = el;
+    while (cur && cur.nodeType === 1) {
+      if (cur.classList && cur.classList.contains('truncate')) return true;
+      if (cur.getAttribute) {
+        var style = cur.getAttribute('style');
+        if (style && /overflow\s*:\s*hidden/i.test(style)) return true;
+      }
+      cur = cur.parentNode;
+    }
+    return false;
+  }
+
   /** Collect convertible text nodes under root via TreeWalker. */
   function collectTextNodes(base) {
     var doc = base && base.nodeType === 9 ? base : (base && base.ownerDocument !== undefined && base.ownerDocument !== null ? base.ownerDocument : null);
@@ -129,9 +204,10 @@
    * Convert one text node in place. Returns number of converted amounts.
    * Wraps the node in a marked span so restore() + skip-logic work.
    */
-  function convertTextNode(textNode, rates, mode) {
+  function convertTextNode(textNode, rates, mode, tableSafe) {
     if (rates === undefined) rates = currentRates;
     if (mode === undefined) mode = currentState.mode;
+    if (tableSafe === undefined || tableSafe === null) tableSafe = currentState.tableSafe !== false;
     if (!textNode || textNode.nodeType !== 3) return 0;
     var original = textNode.nodeValue;
     if (!original || !original.trim()) return 0;
@@ -152,7 +228,32 @@
       if (s) wrapper.appendChild(doc.createTextNode(s));
     };
 
-    for (var i = 0; i < matches.length; i += 1) {
+    // FIX-4 Table-safe: inside tables, `append` must not emit wide inline
+    // badges (they stretch nowrap columns and push Save/Clear out of view).
+    // One block-level subline per text node keeps 100% of column width, and
+    // compound `$A / $B` / `$A–$B` clusters collapse into a single label.
+    // `truncate` / `overflow: hidden` contexts fall back to hover tooltips
+    // (zero width growth, never clipped to `...`).
+    var wantTableSafe = tableSafe && mode === 'append' && isInsideTable(textNode);
+    var wantHoverFallback = tableSafe && mode === 'append' && !wantTableSafe && isTruncatedContext(textNode);
+
+    if (wantTableSafe) {
+      pushText(original);
+      var legs = [];
+      for (var li = 0; li < matches.length; li += 1) {
+        var lv = vndFor(matches[li], rates);
+        if (lv == null) continue;
+        legs.push(formatVND(lv));
+        converted += 1;
+      }
+      if (converted === 0) return 0;
+      var sub = doc.createElement('span');
+      sub.setAttribute('class', 'vnd-subline');
+      sub.setAttribute('data-original', original);
+      sub.textContent = '≈ ' + legs.join(' / ');
+      wrapper.appendChild(sub);
+      cursor = original.length;
+    } else for (var i = 0; i < matches.length; i += 1) {
       var m = matches[i];
       var vnd = vndFor(m, rates);
       if (vnd == null) continue;
@@ -165,7 +266,7 @@
         s.setAttribute('title', 'Gốc: ' + m.raw);
         s.textContent = label;
         wrapper.appendChild(s);
-      } else if (mode === 'hover') {
+      } else if (mode === 'hover' || wantHoverFallback) {
         var h = doc.createElement('span');
         h.setAttribute('class', 'vnd-hover');
         h.setAttribute('data-original', m.raw);
@@ -208,6 +309,7 @@
     var rates = options.rates !== undefined && options.rates !== null ? options.rates : currentRates;
     var mode = options.mode !== undefined && options.mode !== null ? options.mode : currentState.mode;
     var enabled = options.enabled !== undefined && options.enabled !== null ? options.enabled : currentState.enabled;
+    var tableSafe = options.tableSafe !== undefined && options.tableSafe !== null ? options.tableSafe : currentState.tableSafe !== false;
     if (enabled === false) return { count: 0, nodes: 0 };
     if (scanRoot == null) {
       try {
@@ -227,7 +329,7 @@
         // contains() may be missing on partial JSDOM nodes; fall back to parent check.
         if (!t.parentNode) continue;
       }
-      var c = convertTextNode(t, rates, mode);
+      var c = convertTextNode(t, rates, mode, tableSafe);
       if (c > 0) {
         count += c;
         nodes += 1;
@@ -337,7 +439,7 @@
     for (var key in currentRates) {
       if (Object.prototype.hasOwnProperty.call(currentRates, key)) ratesCopy[key] = currentRates[key];
     }
-    return { enabled: currentState.enabled, mode: currentState.mode, rates: ratesCopy };
+    return { enabled: currentState.enabled, mode: currentState.mode, tableSafe: currentState.tableSafe !== false, rates: ratesCopy };
   }
 
   function loadInitialState() {
@@ -351,6 +453,7 @@
             currentState = {
               enabled: res.enabled !== undefined && res.enabled !== null ? res.enabled : true,
               mode: res.mode !== undefined && res.mode !== null ? res.mode : 'append',
+              tableSafe: res.tableSafe !== undefined && res.tableSafe !== null ? res.tableSafe : true,
             };
             return;
           }
@@ -364,7 +467,7 @@
   function loadFromStorage() {
     try {
       if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
-        return chrome.storage.local.get([STORAGE_KEYS.ENABLED, STORAGE_KEYS.MODE]).then(function (got) {
+        return chrome.storage.local.get([STORAGE_KEYS.ENABLED, STORAGE_KEYS.MODE, STORAGE_KEYS.TABLE_SAFE]).then(function (got) {
           currentState = {
             enabled: got && got[STORAGE_KEYS.ENABLED] !== undefined && got[STORAGE_KEYS.ENABLED] !== null
               ? got[STORAGE_KEYS.ENABLED]
@@ -372,6 +475,9 @@
             mode: got && got[STORAGE_KEYS.MODE] !== undefined && got[STORAGE_KEYS.MODE] !== null
               ? got[STORAGE_KEYS.MODE]
               : 'append',
+            tableSafe: got && got[STORAGE_KEYS.TABLE_SAFE] !== undefined && got[STORAGE_KEYS.TABLE_SAFE] !== null
+              ? got[STORAGE_KEYS.TABLE_SAFE]
+              : true,
           };
         }).catch(function () { /* defaults */ });
       }
@@ -439,6 +545,12 @@
             : true;
           needRescan = true;
         }
+        if (changes[STORAGE_KEYS.TABLE_SAFE]) {
+          currentState.tableSafe = changes[STORAGE_KEYS.TABLE_SAFE].newValue !== undefined && changes[STORAGE_KEYS.TABLE_SAFE].newValue !== null
+            ? changes[STORAGE_KEYS.TABLE_SAFE].newValue
+            : true;
+          needRescan = true;
+        }
         if (needRescan && typeof document !== 'undefined') {
           try {
             restoreConverted(document);
@@ -463,6 +575,9 @@
       chrome.runtime.onMessage.addListener(function (msg, _sender, sendResponse) {
         if (msg && msg.type === 'vnd:rescan' && typeof document !== 'undefined') {
           currentState.enabled = msg.enabled !== false;
+          if (msg && msg.tableSafe !== undefined && msg.tableSafe !== null) {
+            currentState.tableSafe = msg.tableSafe;
+          }
           if (currentState.enabled === false) {
             restoreConverted(document);
             reportCount(0).then(function () {
@@ -498,6 +613,8 @@
     DISPLAY_MODES: DISPLAY_MODES,
     DEFAULT_STATE: DEFAULT_STATE,
     isSkipped: isSkipped,
+    isInsideTable: isInsideTable,
+    isTruncatedContext: isTruncatedContext,
     collectTextNodes: collectTextNodes,
     convertTextNode: convertTextNode,
     scanAndConvert: scanAndConvert,

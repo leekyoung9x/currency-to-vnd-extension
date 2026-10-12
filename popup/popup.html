@@ -32,17 +32,21 @@
       <div class="modes" role="radiogroup" aria-label="Chế độ hiển thị">
         <label class="mode">
           <input type="radio" name="mode" value="append" checked />
-          <span class="mode-body"><strong>Kèm theo</strong><small>$3.30 (≈ 85.800 ₫)</small></span>
+          <span class="mode-body"><strong>Kèm theo (Table-safe)</strong><small>Hiện song song, tối ưu không vỡ cột</small></span>
         </label>
         <label class="mode">
           <input type="radio" name="mode" value="replace" />
-          <span class="mode-body"><strong>Thay thế</strong><small>85.800 ₫ · hover xem gốc</small></span>
+          <span class="mode-body"><strong>Thay thế trực tiếp</strong><small>Gọn gàng, rê chuột xem giá gốc</small></span>
         </label>
         <label class="mode">
           <input type="radio" name="mode" value="hover" />
-          <span class="mode-body"><strong>Tooltip khi hover</strong><small>Giữ nguyên layout</small></span>
+          <span class="mode-body"><strong>Tooltip khi hover</strong><small>Giữ nguyên 100% layout gốc (khuyên dùng cho bảng tính, dashboard)</small></span>
         </label>
       </div>
+      <label class="check-row" title="Không làm giãn cột trong mọi bảng tính">
+        <input type="checkbox" id="tableSafe" checked />
+        <span><strong>Bảo vệ bảng (Table-safe mode)</strong><small> — không giãn cột, không đè mất nút Save/Clear</small></span>
+      </label>
     </section>
 
     <section class="card">

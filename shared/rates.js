@@ -33,6 +33,7 @@
     UPDATED_AT: 'vnd_rates_updated_at',
     ENABLED: 'vnd_enabled',
     MODE: 'vnd_display_mode',
+    TABLE_SAFE: 'vnd_table_safe',
   });
 
   /** Merge base rates with user overrides (override wins when finite & > 0). */

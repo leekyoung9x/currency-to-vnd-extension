@@ -19,6 +19,7 @@ var STORAGE_KEYS = RateUtils.STORAGE_KEYS || {
   UPDATED_AT: 'vnd_rates_updated_at',
   ENABLED: 'vnd_enabled',
   MODE: 'vnd_display_mode',
+  TABLE_SAFE: 'vnd_table_safe',
 };
 var mergeRates = RateUtils.mergeRates;
 var ratesFromErApi = RateUtils.ratesFromErApi;
@@ -102,7 +103,7 @@ if (hasChrome()) {
   chrome.runtime.onInstalled.addListener(function () {
     var area = store();
     if (!area) return;
-    area.get([STORAGE_KEYS.ENABLED, STORAGE_KEYS.MODE, STORAGE_KEYS.RATES]).then(function (cur) {
+    area.get([STORAGE_KEYS.ENABLED, STORAGE_KEYS.MODE, STORAGE_KEYS.RATES, STORAGE_KEYS.TABLE_SAFE]).then(function (cur) {
       var patch = {};
       patch[STORAGE_KEYS.ENABLED] = cur && cur[STORAGE_KEYS.ENABLED] !== undefined && cur[STORAGE_KEYS.ENABLED] !== null
         ? cur[STORAGE_KEYS.ENABLED]
@@ -111,6 +112,9 @@ if (hasChrome()) {
         ? cur[STORAGE_KEYS.MODE]
         : 'append';
       patch[STORAGE_KEYS.RATES] = dictCopy(DEFAULT_RATES, (cur && cur[STORAGE_KEYS.RATES]) || {});
+      patch[STORAGE_KEYS.TABLE_SAFE] = cur && cur[STORAGE_KEYS.TABLE_SAFE] !== undefined && cur[STORAGE_KEYS.TABLE_SAFE] !== null
+        ? cur[STORAGE_KEYS.TABLE_SAFE]
+        : true;
       return area.set(patch);
     }).catch(function () { /* noop */ });
     try {
@@ -131,13 +135,14 @@ if (hasChrome()) {
     if (!area) { try { sendResponse({ ok: false, error: 'no storage' }); } catch (_) { /* noop */ } return; }
     var type = msg && msg.type;
     if (type === 'vnd:get-state') {
-      Promise.resolve(area.get([STORAGE_KEYS.ENABLED, STORAGE_KEYS.MODE, STORAGE_KEYS.RATES, STORAGE_KEYS.UPDATED_AT])).then(function (g) {
+      Promise.resolve(area.get([STORAGE_KEYS.ENABLED, STORAGE_KEYS.MODE, STORAGE_KEYS.RATES, STORAGE_KEYS.UPDATED_AT, STORAGE_KEYS.TABLE_SAFE])).then(function (g) {
         sendResponse({
           ok: true,
           enabled: g && g[STORAGE_KEYS.ENABLED] !== undefined && g[STORAGE_KEYS.ENABLED] !== null ? g[STORAGE_KEYS.ENABLED] : true,
           mode: g && g[STORAGE_KEYS.MODE] !== undefined && g[STORAGE_KEYS.MODE] !== null ? g[STORAGE_KEYS.MODE] : 'append',
           rates: dictCopy(DEFAULT_RATES, (g && g[STORAGE_KEYS.RATES]) || {}),
           updatedAt: (g && g[STORAGE_KEYS.UPDATED_AT]) || 0,
+          tableSafe: g && g[STORAGE_KEYS.TABLE_SAFE] !== undefined && g[STORAGE_KEYS.TABLE_SAFE] !== null ? g[STORAGE_KEYS.TABLE_SAFE] : true,
         });
       }).catch(function () {
         try { sendResponse({ ok: false, error: 'internal error' }); } catch (_) { /* noop */ }
@@ -181,6 +186,14 @@ if (hasChrome()) {
       var modePatch = {};
       modePatch[STORAGE_KEYS.MODE] = msg && msg.mode;
       Promise.resolve(area.set(modePatch)).then(function () { sendResponse({ ok: true }); }).catch(function () {
+        try { sendResponse({ ok: false, error: 'internal error' }); } catch (_) { /* noop */ }
+      });
+      return true; // async response
+    }
+    if (type === 'vnd:set-table-safe') {
+      var safePatch = {};
+      safePatch[STORAGE_KEYS.TABLE_SAFE] = !(msg && msg.tableSafe === false);
+      Promise.resolve(area.set(safePatch)).then(function () { sendResponse({ ok: true }); }).catch(function () {
         try { sendResponse({ ok: false, error: 'internal error' }); } catch (_) { /* noop */ }
       });
       return true; // async response

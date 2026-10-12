@@ -7,16 +7,30 @@
 .vnd-badge {
   display: inline-block;
   margin-left: 4px;
-  padding: 1px 7px;
+  padding: 0 5px;
   border-radius: 999px;
   background: #e6f4f1;
   color: #0b6b5f;
   border: 1px solid #bfe3dd;
-  font-size: 0.88em;
+  font-size: 0.8em;
   font-weight: 600;
-  line-height: 1.5;
+  line-height: normal;
   white-space: nowrap;
   vertical-align: baseline;
+}
+
+/* FIX-4: Table-safe subline — block-level converted line under the original
+   price inside <td>/<th>. It wraps vertically (white-space: normal) so the
+   column keeps 100% of its original width; Save/Clear stay in view. */
+.vnd-subline {
+  display: block;
+  font-size: 0.75em;
+  line-height: 1.2;
+  color: #0b6b5f;
+  font-weight: 500;
+  margin-top: 1px;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 .vnd-replace {
@@ -68,4 +82,31 @@
   .vnd-hover::after {
     transition: none;
   }
+}
+
+/* FIX-4: Dark-mode support — InferHub uses bg-zinc-950; hard mint badge
+   colors glare on dark backgrounds, so switch to translucent emerald. */
+@media (prefers-color-scheme: dark) {
+  .vnd-badge {
+    background: rgba(16, 185, 129, 0.18);
+    color: #34d399;
+    border-color: rgba(16, 185, 129, 0.35);
+  }
+  .vnd-subline {
+    color: #34d399;
+  }
+  .vnd-replace {
+    color: #34d399;
+  }
+}
+.dark .vnd-badge, [data-theme="dark"] .vnd-badge {
+  background: rgba(16, 185, 129, 0.18);
+  color: #34d399;
+  border-color: rgba(16, 185, 129, 0.35);
+}
+.dark .vnd-subline, [data-theme="dark"] .vnd-subline {
+  color: #34d399;
+}
+.dark .vnd-replace, [data-theme="dark"] .vnd-replace {
+  color: #34d399;
 }

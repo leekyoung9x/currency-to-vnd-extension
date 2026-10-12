@@ -8,6 +8,7 @@ import { currencyTests } from './currency.test.mjs';
 import { domScanTests } from './dom_scan.test.mjs';
 import { manifestTests } from './manifest.test.mjs';
 import { toggleTests } from './toggle.test.mjs';
+import { layoutSafetyTests } from './layout_safety.test.mjs';
 
 const pad = (s, n) => {
   const t = String(s);
@@ -45,6 +46,11 @@ try {
   all.push(...(await toggleTests()));
 } catch (e) {
   all.push({ test: 'toggleTests() threw', expected: 'no throw', actual: String(e?.message || e), pass: false });
+}
+try {
+  all.push(...(await layoutSafetyTests()));
+} catch (e) {
+  all.push({ test: 'layoutSafetyTests() threw', expected: 'no throw', actual: String(e?.message || e), pass: false });
 }
 
 printTable(all);

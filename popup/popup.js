@@ -14,7 +14,9 @@ var STORAGE_KEYS = ((typeof window !== 'undefined' && window.RateUtils && window
     UPDATED_AT: 'vnd_rates_updated_at',
     ENABLED: 'vnd_enabled',
     MODE: 'vnd_display_mode',
+    TABLE_SAFE: 'vnd_table_safe',
   });
+if (!STORAGE_KEYS.TABLE_SAFE) STORAGE_KEYS.TABLE_SAFE = 'vnd_table_safe';
 
 const $ = (id) => document.getElementById(id);
 const MAIN_CODES = ['USD', 'EUR', 'GBP', 'JPY', 'CNY', 'KRW', 'AUD', 'CAD', 'SGD', 'THB'];
@@ -39,7 +41,7 @@ async function getState() {
       if (res?.ok) return res;
     }
   } catch (_) { /* fallback */ }
-  return { ok: true, enabled: true, mode: 'append', rates: { ...DEFAULT_RATES }, updatedAt: 0 };
+  return { ok: true, enabled: true, mode: 'append', tableSafe: true, rates: { ...DEFAULT_RATES }, updatedAt: 0 };
 }
 
 async function activeTab() {
@@ -114,6 +116,7 @@ async function refreshStats() {
 document.addEventListener('DOMContentLoaded', async () => {
   const state = await getState();
   $('enabled').checked = state.enabled !== false;
+  if ($('tableSafe')) $('tableSafe').checked = state.tableSafe !== false;
   document.querySelectorAll('input[name="mode"]').forEach((r) => {
     r.checked = r.value === (state.mode || 'append');
   });
@@ -149,6 +152,22 @@ document.addEventListener('DOMContentLoaded', async () => {
       } catch (_) { /* noop */ }
     });
   });
+
+  if ($('tableSafe')) {
+    $('tableSafe').addEventListener('change', async (e) => {
+      const tableSafe = e.target.checked;
+      try {
+        await chrome.storage.local.set({ [STORAGE_KEYS.TABLE_SAFE]: tableSafe }).catch(() => null);
+      } catch (_) { /* direct storage save is best-effort */ }
+      try {
+        chrome.runtime.sendMessage({ type: 'vnd:set-table-safe', tableSafe }).catch(() => null);
+      } catch (_) { /* background notify is best-effort */ }
+      try {
+        const tab = await activeTab();
+        if (tab?.id) chrome.tabs.sendMessage(tab.id, { type: 'vnd:rescan', tableSafe }).catch(() => null);
+      } catch (_) { /* tab notify is best-effort */ }
+    });
+  }
 
   $('rescan').addEventListener('click', async () => {
     try {
