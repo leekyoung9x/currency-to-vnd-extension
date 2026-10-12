@@ -1,15 +1,21 @@
 /**
  * verify/verify.js — standalone self-check: runs conversion assertions and
  * renders a TEST | EXPECTED | ACTUAL | PASS/FAIL table into verify.html.
+ * Classic page script (reads globals from shared/*.js + content.js above).
  */
-import {
-  detectCurrencyAmounts,
-  convertToVND,
-  formatVND,
-  parseCurrencyAmount,
-  DEFAULT_RATES,
-} from '../shared/currency.js';
-import { scanAndConvert, restoreConverted } from '../content/content.js';
+var CurrencyUtils = (typeof window !== 'undefined' && window.CurrencyUtils)
+  || (typeof globalThis !== 'undefined' && globalThis.CurrencyUtils)
+  || {};
+var CurrencyContent = (typeof window !== 'undefined' && window.CurrencyContent)
+  || (typeof globalThis !== 'undefined' && globalThis.CurrencyContent)
+  || {};
+var detectCurrencyAmounts = CurrencyUtils.detectCurrencyAmounts;
+var convertToVND = CurrencyUtils.convertToVND;
+var formatVND = CurrencyUtils.formatVND;
+var parseCurrencyAmount = CurrencyUtils.parseCurrencyAmount;
+var DEFAULT_RATES = CurrencyUtils.DEFAULT_RATES || {};
+var scanAndConvert = CurrencyContent.scanAndConvert;
+var restoreConverted = CurrencyContent.restoreConverted;
 
 const CASES = [
   { input: '$3.30', expected: '85.800 ₫' },
@@ -23,7 +29,7 @@ const CASES = [
   { input: '€1.234,56', expected: '34.814.592 ₫' },
 ];
 
-export function runChecks() {
+function runChecks() {
   const rows = [];
   for (const c of CASES) {
     if (c.expectedCount != null) {
@@ -67,6 +73,10 @@ function render(rows) {
   summary.textContent = `${pass}/${rows.length} PASS`;
   return pass === rows.length;
 }
+
+try {
+  if (typeof window !== 'undefined') window.VndVerify = { runChecks: runChecks };
+} catch (_) { /* noop */ }
 
 document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('run').addEventListener('click', () => {

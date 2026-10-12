@@ -1,8 +1,12 @@
 /**
  * options/options.js — full rate table editor + display settings + probe.
+ * Classic page script (reads globals from shared/*.js loaded above).
  */
-import { DEFAULT_RATES } from '../shared/rates.js';
-import { convertAndFormat } from '../shared/currency.js';
+var CurrencyUtils = (typeof window !== 'undefined' && window.CurrencyUtils)
+  || (typeof globalThis !== 'undefined' && globalThis.CurrencyUtils)
+  || {};
+var DEFAULT_RATES = CurrencyUtils.DEFAULT_RATES || {};
+var convertAndFormat = CurrencyUtils.convertAndFormat;
 
 const $ = (id) => document.getElementById(id);
 const CODES = Object.keys(DEFAULT_RATES);

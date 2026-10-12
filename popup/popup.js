@@ -1,8 +1,11 @@
 /**
  * popup/popup.js — controls: on/off switch, display mode, rates view/edit,
- * converted-count stats, re-scan. Module script (extension page).
+ * converted-count stats, re-scan. Classic page script (reads globals from
+ * shared/currency.js + shared/rates.js loaded via <script> tags above).
  */
-import { DEFAULT_RATES } from '../shared/rates.js';
+var DEFAULT_RATES = ((typeof window !== 'undefined' && window.CurrencyUtils && window.CurrencyUtils.DEFAULT_RATES)
+  || ((typeof window !== 'undefined' && window.RateUtils && window.RateUtils.DEFAULT_RATES))
+  || {});
 
 const $ = (id) => document.getElementById(id);
 const MAIN_CODES = ['USD', 'EUR', 'GBP', 'JPY', 'CNY', 'KRW', 'AUD', 'CAD', 'SGD', 'THB'];

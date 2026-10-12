@@ -1,8 +1,27 @@
 /**
  * tests/currency.test.mjs — unit tests for parse / regex / convert / format.
+ * Loads the REAL classic extension scripts (shared/currency.js,
+ * shared/rates.js) into the global scope via vm, exactly like Chrome MV3
+ * loads them as classic scripts — no ESM `import` of the sources.
  * Exports `currencyTests()` -> array of { test, expected, actual, pass }.
  */
-import {
+import { readFileSync } from 'node:fs';
+import vm from 'node:vm';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const here = path.dirname(fileURLToPath(import.meta.url));
+
+function loadClassic(rel) {
+  const code = readFileSync(path.join(here, '..', rel), 'utf-8');
+  vm.runInThisContext(code, { filename: rel });
+  return code;
+}
+
+const currencySrc = loadClassic('shared/currency.js');
+const ratesSrc = loadClassic('shared/rates.js');
+
+const {
   detectCurrencyAmounts,
   parseCurrencyAmount,
   parseNumber,
@@ -10,7 +29,7 @@ import {
   formatVND,
   convertAndFormat,
   DEFAULT_RATES,
-} from '../shared/currency.js';
+} = globalThis.CurrencyUtils;
 
 const RATE_USD = DEFAULT_RATES.USD; // 26000
 
@@ -25,6 +44,28 @@ function fmtAmount(p) {
 
 export function currencyTests() {
   const rows = [];
+
+  // ---- classic-script static assertions (FIX-1): no ESM keywords ----
+  rows.push(row(
+    'classic: shared/currency.js has no ESM import',
+    'no ^import line',
+    /^import\s+/m.test(currencySrc) ? 'HAS import' : 'no ^import line',
+  ));
+  rows.push(row(
+    'classic: shared/currency.js has no ESM export',
+    'no ^export line',
+    /^export\s+/m.test(currencySrc) ? 'HAS export' : 'no ^export line',
+  ));
+  rows.push(row(
+    'classic: shared/rates.js has no ESM import',
+    'no ^import line',
+    /^import\s+/m.test(ratesSrc) ? 'HAS import' : 'no ^import line',
+  ));
+  rows.push(row(
+    'classic: shared/rates.js has no ESM export',
+    'no ^export line',
+    /^export\s+/m.test(ratesSrc) ? 'HAS export' : 'no ^export line',
+  ));
 
   // ---- parse: basic symbol forms ----
   rows.push(row('parse "$3.30"', 'USD 3.3', fmtAmount(parseCurrencyAmount('$3.30'))));

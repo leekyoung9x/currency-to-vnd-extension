@@ -1,17 +1,33 @@
 /**
  * tests/dom_scan.test.mjs — integration tests on the REAL user fixture
  * (fixtures/Usage_logs_Dashboard_InferHub.html) via JSDOM.
+ * Loads the REAL classic extension scripts (shared/currency.js,
+ * shared/rates.js, content/content.js) into the global scope via vm,
+ * exactly like Chrome MV3 loads them as classic content scripts.
  * Exports `domScanTests()` -> array of { test, expected, actual, pass }.
  */
 import { readFile } from 'node:fs/promises';
+import { readFileSync } from 'node:fs';
+import vm from 'node:vm';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { JSDOM } from 'jsdom';
-import { DEFAULT_RATES } from '../shared/currency.js';
-import { scanAndConvert, restoreConverted } from '../content/content.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const FIXTURE = path.join(here, '..', 'fixtures', 'Usage_logs_Dashboard_InferHub.html');
+
+function loadClassic(rel) {
+  const code = readFileSync(path.join(here, '..', rel), 'utf-8');
+  vm.runInThisContext(code, { filename: rel });
+  return code;
+}
+
+const currencySrc = loadClassic('shared/currency.js');
+loadClassic('shared/rates.js');
+const contentSrc = loadClassic('content/content.js');
+
+const DEFAULT_RATES = globalThis.CurrencyUtils.DEFAULT_RATES;
+const { scanAndConvert, restoreConverted } = globalThis.CurrencyContent;
 
 function row(test, expected, actual, pass = String(expected) === String(actual)) {
   return { test, expected: String(expected), actual: String(actual), pass: !!pass };
@@ -20,6 +36,19 @@ function row(test, expected, actual, pass = String(expected) === String(actual))
 export async function domScanTests() {
   const rows = [];
   const html = await readFile(FIXTURE, 'utf-8');
+
+  // ---- classic-script static assertions (FIX-1): no ESM keywords ----
+  rows.push(row(
+    'classic: content/content.js has no ESM import',
+    'no ^import line',
+    /^import\s+/m.test(contentSrc) ? 'HAS import' : 'no ^import line',
+  ));
+  rows.push(row(
+    'classic: content/content.js has no ESM export',
+    'no ^export line',
+    /^export\s+/m.test(contentSrc) ? 'HAS export' : 'no ^export line',
+  ));
+  void currencySrc;
 
   // ---- main fixture scan (append mode) ----
   {
