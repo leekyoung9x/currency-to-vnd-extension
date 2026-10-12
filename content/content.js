@@ -443,9 +443,14 @@
           try {
             restoreConverted(document);
           } catch (_) { /* noop */ }
-          if (currentState.enabled) {
+          if (currentState.enabled === false) {
             try {
-              scanAndConvert(document);
+              reportCount(0);
+            } catch (_) { /* noop */ }
+          } else if (currentState.enabled) {
+            try {
+              var r = scanAndConvert(document);
+              reportCount(r.count);
             } catch (_) { /* noop */ }
           }
         }
@@ -457,18 +462,27 @@
     if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.onMessage) {
       chrome.runtime.onMessage.addListener(function (msg, _sender, sendResponse) {
         if (msg && msg.type === 'vnd:rescan' && typeof document !== 'undefined') {
-          loadInitialState().then(function () {
+          currentState.enabled = msg.enabled !== false;
+          if (currentState.enabled === false) {
+            restoreConverted(document);
+            reportCount(0).then(function () {
+              sendResponse({ ok: true, count: 0, nodes: 0 });
+            });
+          } else {
             restoreConverted(document);
             var r = scanAndConvert(document);
-            return reportCount(r.count).then(function () {
+            reportCount(r.count).then(function () {
               sendResponse({ ok: true, count: r.count, nodes: r.nodes });
             });
-          });
+          }
           return true;
         }
         if (msg && msg.type === 'vnd:restore' && typeof document !== 'undefined') {
+          currentState.enabled = false;
           var out = restoreConverted(document);
-          sendResponse({ ok: true, restored: out.restored });
+          reportCount(0).then(function () {
+            sendResponse({ ok: true, restored: out.restored });
+          });
           return true;
         }
         return undefined;

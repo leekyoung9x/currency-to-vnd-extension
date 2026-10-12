@@ -7,6 +7,15 @@ var DEFAULT_RATES = ((typeof window !== 'undefined' && window.CurrencyUtils && w
   || ((typeof window !== 'undefined' && window.RateUtils && window.RateUtils.DEFAULT_RATES))
   || {});
 
+var STORAGE_KEYS = ((typeof window !== 'undefined' && window.RateUtils && window.RateUtils.STORAGE_KEYS)
+  || {
+    RATES: 'vnd_rates',
+    CUSTOM_RATES: 'vnd_custom_rates',
+    UPDATED_AT: 'vnd_rates_updated_at',
+    ENABLED: 'vnd_enabled',
+    MODE: 'vnd_display_mode',
+  });
+
 const $ = (id) => document.getElementById(id);
 const MAIN_CODES = ['USD', 'EUR', 'GBP', 'JPY', 'CNY', 'KRW', 'AUD', 'CAD', 'SGD', 'THB'];
 
@@ -113,11 +122,22 @@ document.addEventListener('DOMContentLoaded', async () => {
   await refreshStats();
 
   $('enabled').addEventListener('change', async (e) => {
+    const isEnabled = e.target.checked;
     try {
-      await chrome.runtime.sendMessage({ type: 'vnd:set-enabled', enabled: e.target.checked });
+      await chrome.storage.local.set({ [STORAGE_KEYS.ENABLED]: isEnabled }).catch(() => null);
+    } catch (_) { /* direct storage save is best-effort */ }
+    try {
+      chrome.runtime.sendMessage({ type: 'vnd:set-enabled', enabled: isEnabled }).catch(() => null);
+    } catch (_) { /* background notify is best-effort */ }
+    try {
       const tab = await activeTab();
-      if (tab?.id) await chrome.tabs.sendMessage(tab.id, { type: e.target.checked ? 'vnd:rescan' : 'vnd:restore' }).catch(() => null);
-    } catch (_) { /* noop */ }
+      if (tab?.id) chrome.tabs.sendMessage(tab.id, { type: isEnabled ? 'vnd:rescan' : 'vnd:restore', enabled: isEnabled }).catch(() => null);
+    } catch (_) { /* tab notify is best-effort */ }
+    if (!isEnabled) {
+      $('statCount').textContent = 'Đã tắt extension trên trang';
+    } else {
+      await refreshStats();
+    }
   });
 
   document.querySelectorAll('input[name="mode"]').forEach((r) => {
