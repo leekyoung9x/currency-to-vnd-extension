@@ -20,6 +20,9 @@ if (!STORAGE_KEYS.TABLE_SAFE) STORAGE_KEYS.TABLE_SAFE = 'vnd_table_safe';
 
 const $ = (id) => document.getElementById(id);
 const MAIN_CODES = ['USD', 'EUR', 'GBP', 'JPY', 'CNY', 'KRW', 'AUD', 'CAD', 'SGD', 'THB'];
+const DOLLAR_KEY = 'vnd_dollar_currency';
+const YEN_KEY = 'vnd_yen_currency';
+let customRates = {};
 
 function fmtRate(n) {
   return String(Math.round(Number(n) || 0)).replace(/\B(?=(\d{3})+(?!\d))/g, '.');
@@ -76,8 +79,10 @@ function renderRates(rates) {
     input.min = '0';
     input.step = 'any';
     input.id = `custom-${code}`;
-    input.value = rates?.[code] ?? DEFAULT_RATES[code] ?? '';
-    input.placeholder = String(DEFAULT_RATES[code] ?? '');
+    // Only real overrides are filled in; the placeholder shows the live rate,
+    // so saving never freezes untouched currencies at today's value.
+    input.value = customRates?.[code] ?? '';
+    input.placeholder = String(Math.round(Number(rates?.[code] ?? DEFAULT_RATES[code])) || '');
     label.appendChild(input);
     custom.appendChild(label);
   }
@@ -105,6 +110,9 @@ async function refreshStats() {
     }
     const res = await chrome.tabs.sendMessage(tab.id, { type: 'vnd:count?' }).catch(() => null);
     const n = Number(res?.count);
+    if (res?.hints && $('hintNow')) {
+      $('hintNow').textContent = `Trang này: $ = ${res.hints.dollar}, ¥ = ${res.hints.yen}. Ký hiệu rõ ràng như CA$, US$, CN¥ luôn được nhận đúng.`;
+    }
     $('statCount').textContent = Number.isFinite(n) && n > 0
       ? `Đã quy đổi ${n} giá tiền trên trang này`
       : 'Chưa phát hiện giá tiền nào (bấm Quét lại trang)';
@@ -115,7 +123,10 @@ async function refreshStats() {
 
 document.addEventListener('DOMContentLoaded', async () => {
   const state = await getState();
+  customRates = state.customRates || {};
   $('enabled').checked = state.enabled !== false;
+  if ($('dollarSel')) $('dollarSel').value = state.dollar || 'auto';
+  if ($('yenSel')) $('yenSel').value = state.yen || 'auto';
   if ($('tableSafe')) $('tableSafe').checked = state.tableSafe !== false;
   document.querySelectorAll('input[name="mode"]').forEach((r) => {
     r.checked = r.value === (state.mode || 'append');
@@ -169,6 +180,16 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
   }
 
+  // Content scripts listen to these keys and redraw on change.
+  for (const [id, key] of [['dollarSel', DOLLAR_KEY], ['yenSel', YEN_KEY]]) {
+    $(id)?.addEventListener('change', async (e) => {
+      try {
+        await chrome.storage.local.set({ [key]: e.target.value });
+        setTimeout(refreshStats, 400);
+      } catch (_) { /* noop */ }
+    });
+  }
+
   $('rescan').addEventListener('click', async () => {
     try {
       const tab = await activeTab();
@@ -202,6 +223,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     const overrides = readCustom();
     try {
       await chrome.storage.local.set({ vnd_custom_rates: overrides });
+      customRates = overrides;
       const tab = await activeTab();
       if (tab?.id) await chrome.tabs.sendMessage(tab.id, { type: 'vnd:rescan' }).catch(() => null);
       $('refreshMsg').textContent = `Đã lưu ${Object.keys(overrides).length} tỷ giá tùy chỉnh.`;
@@ -213,7 +235,9 @@ document.addEventListener('DOMContentLoaded', async () => {
   $('resetCustom').addEventListener('click', async () => {
     try {
       await chrome.storage.local.remove(['vnd_custom_rates']);
-      renderRates({ ...DEFAULT_RATES });
+      customRates = {};
+      const fresh = await getState();
+      renderRates(fresh.rates || DEFAULT_RATES);
       $('refreshMsg').textContent = 'Đã khôi phục tỷ giá mặc định.';
     } catch (_) { /* noop */ }
   });

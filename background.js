@@ -21,11 +21,14 @@ var STORAGE_KEYS = RateUtils.STORAGE_KEYS || {
   MODE: 'vnd_display_mode',
   TABLE_SAFE: 'vnd_table_safe',
 };
+var DOLLAR_KEY = 'vnd_dollar_currency';
+var YEN_KEY = 'vnd_yen_currency';
 var mergeRates = RateUtils.mergeRates;
 var ratesFromErApi = RateUtils.ratesFromErApi;
 
 var LIVE_URL = 'https://open.er-api.com/v6/latest/USD';
 var REFRESH_MINUTES = 360; // 6h
+var STALE_MS = REFRESH_MINUTES * 60 * 1000;
 
 function store() {
   try {
@@ -77,6 +80,17 @@ function refreshLiveRates() {
   });
 }
 
+/** Fetch live rates when the stored table is older than STALE_MS. */
+function refreshIfStale() {
+  var area = store();
+  if (!area) return Promise.resolve(null);
+  return area.get([STORAGE_KEYS.UPDATED_AT]).then(function (got) {
+    var at = Number(got && got[STORAGE_KEYS.UPDATED_AT]) || 0;
+    if (Date.now() - at < STALE_MS) return null;
+    return refreshLiveRates();
+  }).catch(function () { return null; /* keep offline rates */ });
+}
+
 function setBadge(count, tabId) {
   try {
     if (typeof chrome === 'undefined' || !chrome.action) return Promise.resolve();
@@ -116,11 +130,17 @@ if (hasChrome()) {
         ? cur[STORAGE_KEYS.TABLE_SAFE]
         : true;
       return area.set(patch);
-    }).catch(function () { /* noop */ });
+    }).then(refreshIfStale).catch(function () { /* noop */ });
     try {
       chrome.alarms.create('vnd-rates-refresh', { periodInMinutes: REFRESH_MINUTES });
     } catch (_) { /* alarms optional */ }
   });
+
+  if (chrome.runtime.onStartup) {
+    chrome.runtime.onStartup.addListener(function () {
+      refreshIfStale();
+    });
+  }
 
   if (chrome.alarms && chrome.alarms.onAlarm) {
     chrome.alarms.onAlarm.addListener(function (alarm) {
@@ -135,12 +155,18 @@ if (hasChrome()) {
     if (!area) { try { sendResponse({ ok: false, error: 'no storage' }); } catch (_) { /* noop */ } return; }
     var type = msg && msg.type;
     if (type === 'vnd:get-state') {
-      Promise.resolve(area.get([STORAGE_KEYS.ENABLED, STORAGE_KEYS.MODE, STORAGE_KEYS.RATES, STORAGE_KEYS.UPDATED_AT, STORAGE_KEYS.TABLE_SAFE])).then(function (g) {
+      Promise.resolve(area.get([STORAGE_KEYS.ENABLED, STORAGE_KEYS.MODE, STORAGE_KEYS.RATES, STORAGE_KEYS.CUSTOM_RATES, STORAGE_KEYS.UPDATED_AT, STORAGE_KEYS.TABLE_SAFE, DOLLAR_KEY, YEN_KEY])).then(function (g) {
+        var custom = (g && g[STORAGE_KEYS.CUSTOM_RATES]) || {};
         sendResponse({
           ok: true,
           enabled: g && g[STORAGE_KEYS.ENABLED] !== undefined && g[STORAGE_KEYS.ENABLED] !== null ? g[STORAGE_KEYS.ENABLED] : true,
           mode: g && g[STORAGE_KEYS.MODE] !== undefined && g[STORAGE_KEYS.MODE] !== null ? g[STORAGE_KEYS.MODE] : 'append',
-          rates: dictCopy(DEFAULT_RATES, (g && g[STORAGE_KEYS.RATES]) || {}),
+          // Custom overrides win over live/default rates.
+          rates: mergeRates(dictCopy(DEFAULT_RATES, (g && g[STORAGE_KEYS.RATES]) || {}), custom),
+          baseRates: dictCopy(DEFAULT_RATES, (g && g[STORAGE_KEYS.RATES]) || {}),
+          customRates: dictCopy(custom),
+          dollar: (g && g[DOLLAR_KEY]) || 'auto',
+          yen: (g && g[YEN_KEY]) || 'auto',
           updatedAt: (g && g[STORAGE_KEYS.UPDATED_AT]) || 0,
           tableSafe: g && g[STORAGE_KEYS.TABLE_SAFE] !== undefined && g[STORAGE_KEYS.TABLE_SAFE] !== null ? g[STORAGE_KEYS.TABLE_SAFE] : true,
         });
@@ -199,8 +225,10 @@ if (hasChrome()) {
       return true; // async response
     }
     if (type === 'vnd:refresh-rates') {
-      refreshLiveRates().then(function (rates) {
-        sendResponse({ ok: true, rates: rates, updatedAt: Date.now() });
+      refreshLiveRates().then(function (live) {
+        return getEffectiveRates().then(function (rates) {
+          sendResponse({ ok: true, rates: rates, baseRates: live, updatedAt: Date.now() });
+        });
       }).catch(function (e) {
         try { sendResponse({ ok: false, error: String((e && e.message) || e) }); } catch (_) { /* noop */ }
       });

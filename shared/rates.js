@@ -22,6 +22,21 @@
     INR: 310,
     TWD: 850,
     HKD: 3350,
+    NZD: 15500,
+    CHF: 32500,
+    MXN: 1400,
+    BRL: 4800,
+    PHP: 450,
+    MYR: 6100,
+    IDR: 1.6,
+    RUB: 320,
+    TRY: 620,
+    SEK: 2750,
+    NOK: 2600,
+    DKK: 4050,
+    PLN: 7100,
+    ZAR: 1480,
+    AED: 7080,
   });
 
   var DEFAULT_RATES = (root.CurrencyUtils && root.CurrencyUtils.DEFAULT_RATES) || FALLBACK_RATES;
