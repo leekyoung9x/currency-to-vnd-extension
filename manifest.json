@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Currency to VND Converter",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Tự động quét trang web, nhận diện tiền tệ nước ngoài (USD, EUR, GBP, JPY, …) và quy đổi sang Việt Nam Đồng (VND).",
   "permissions": ["storage", "scripting", "activeTab", "alarms"],
   "host_permissions": ["<all_urls>", "https://open.er-api.com/*"],
