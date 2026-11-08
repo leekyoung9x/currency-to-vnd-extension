@@ -245,6 +245,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   try {
     const v = chrome.runtime?.getManifest?.().version;
     if (v && $('extVersion')) $('extVersion').textContent = `v${v}`;
+    if (v && $('extVersionHead')) $('extVersionHead').textContent = `v${v}`;
   } catch (_) { /* noop */ }
 
   // Get DOM (debug): inject shared/debug_dump.js into the active tab, run
