@@ -456,20 +456,16 @@
     if (refNode && refNode.parentNode) refNode.parentNode.insertBefore(newNode, refNode.nextSibling);
   }
 
-  /** Convert every multi-node match of one run. Returns converted count. */
-  function convertRun(parent, run, rates, mode, tableSafe) {
-    if (!run || !run.text || run.text.length > 120) return 0;
+  /** Build conversion plans for one run without touching the DOM. */
+  function planRun(run, rates) {
+    var plans = [];
+    if (!run || !run.text || run.text.length > 120) return plans;
     var nonEmpty = 0;
     for (var s = 0; s < run.segments.length; s += 1) {
       if (run.segments[s].text) nonEmpty += 1;
     }
-    if (nonEmpty < 2 || !CURRENCY_HINT_RE.test(run.text)) return 0;
+    if (nonEmpty < 2 || !CURRENCY_HINT_RE.test(run.text)) return plans;
     var matches = detectCurrencyAmounts(run.text);
-    if (matches.length === 0) return 0;
-
-    var doc = parent.ownerDocument;
-    if (!doc) return 0;
-    var plans = [];
     for (var i = 0; i < matches.length; i += 1) {
       var m = matches[i];
       var mEnd = m.index + m.raw.length;
@@ -484,7 +480,96 @@
       if (vnd == null) continue;
       plans.push({ match: m, vnd: vnd, first: touched[0].domNode, last: touched[touched.length - 1].domNode });
     }
+    return plans;
+  }
+
+  /**
+   * Column-shape alignment for replaced amounts inside tables. Sites like
+   * Surplus pad their own prices so every value in a column shares one
+   * shape (decimal marks in a straight line, stable column width). A
+   * plain replace destroys that: `288 ₫` next to `57,79 ₫` looks ragged.
+   * So group converted VND values per table column, take the widest shape
+   * (grouped-integer length + fraction digits), and pad each value with
+   * an invisible leading span — the same trick the sites themselves use.
+   */
+  function fracDigitsNeeded(vnd) {
+    var a = Math.abs(Number(vnd));
+    if (!Number.isFinite(a) || a === 0) return 0;
+    if (a >= 100) return 0;
+    if (a >= 1) return 2;
+    for (var dec = 2; dec <= 6; dec += 1) {
+      if (Number(a.toFixed(dec)) !== 0) return dec;
+    }
+    return 6;
+  }
+
+  function groupedParts(vnd, fracDigits) {
+    var n = Number(vnd);
+    var neg = n < 0;
+    var fixed = Math.abs(n).toFixed(fracDigits);
+    var parts = fixed.split('.');
+    var intStr = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+    return { neg: neg, intStr: intStr, fracStr: fracDigits > 0 ? (parts[1] || '') : '' };
+  }
+
+  function shapeOfValue(vnd) {
+    var f = fracDigitsNeeded(vnd);
+    var p = groupedParts(vnd, f);
+    return { intLen: (p.neg ? 1 : 0) + p.intStr.length, frac: f };
+  }
+
+  /** Render a VND value into `container`, padded to the column shape. */
+  function appendAlignedVND(doc, container, vnd, shape) {
+    if (!shape) {
+      container.textContent = formatVND(vnd);
+      return;
+    }
+    var f = Math.max(shape.frac, fracDigitsNeeded(vnd));
+    var p = groupedParts(vnd, f);
+    var padLen = Math.max(0, shape.intLen - ((p.neg ? 1 : 0) + p.intStr.length));
+    if (padLen > 0) {
+      var pad = doc.createElement('span');
+      pad.setAttribute('class', 'vnd-pad');
+      pad.setAttribute('aria-hidden', 'true');
+      pad.textContent = '0'.repeat(padLen);
+      container.appendChild(pad);
+    }
+    container.appendChild(doc.createTextNode(
+      (p.neg ? '-' : '') + p.intStr + (f > 0 ? ',' + p.fracStr : '') + ' ₫'
+    ));
+  }
+
+  /** Locate { table, col } for a node inside a table cell, or null. */
+  function tableColumnOf(node) {
+    var el = node && node.nodeType === 1 ? node : (node && node.parentElement ? node.parentElement : null);
+    var cell = null;
+    var table = null;
+    var cur = el;
+    while (cur && cur.nodeType === 1) {
+      var tag = (cur.tagName || '').toUpperCase();
+      var role = cur.getAttribute ? String(cur.getAttribute('role') || '').toLowerCase() : '';
+      if (!cell && (tag === 'TD' || tag === 'TH' || role === 'cell' || role === 'gridcell')) cell = cur;
+      if (tag === 'TABLE' || role === 'table' || role === 'grid' || role === 'treegrid') { table = cur; break; }
+      cur = cur.parentNode;
+    }
+    if (!cell || !table) return null;
+    var col = -1;
+    try {
+      if (typeof cell.cellIndex === 'number' && cell.cellIndex >= 0) col = cell.cellIndex;
+    } catch (_) { /* noop */ }
+    if (col < 0 && cell.parentNode && cell.parentNode.children) {
+      col = Array.prototype.indexOf.call(cell.parentNode.children, cell);
+    }
+    if (col < 0) return null;
+    return { table: table, col: col };
+  }
+
+  /** Convert every multi-node match of one run. Returns converted count. */
+  function convertRun(parent, run, rates, mode, tableSafe, plans, shape) {
+    if (!plans) plans = planRun(run, rates);
     if (plans.length === 0) return 0;
+    var doc = parent.ownerDocument;
+    if (!doc) return 0;
 
     var converted = 0;
     selfMutating = true;
@@ -551,7 +636,11 @@
             rep.setAttribute('class', 'vnd-replace');
             rep.setAttribute('data-original', plan.match.raw);
             rep.setAttribute('title', 'Gốc: ' + plan.match.raw);
-            rep.textContent = formatVND(plan.vnd);
+            if (shape && plans.length === 1) {
+              appendAlignedVND(doc, rep, plan.vnd, shape);
+            } else {
+              rep.textContent = formatVND(plan.vnd);
+            }
             for (var e = 0; e < rangeNodes.length; e += 1) {
               if (rangeNodes[e].parentNode) rangeNodes[e].parentNode.removeChild(rangeNodes[e]);
             }
@@ -589,15 +678,66 @@
       }
       if (hasText) candidates.push(el);
     }
+    // Pre-plan every candidate so table columns can be shape-aligned
+    // (replace mode) before any DOM mutation happens.
+    var items = [];
     for (var c = 0; c < candidates.length; c += 1) {
       var parent = candidates[c];
       try {
         if (!parent.parentNode && parent !== scope) continue;
         if (isSkipped(parent)) continue;
         var runs = buildRuns(parent);
-        var parentConverted = 0;
+        var planned = [];
+        var any = false;
         for (var r = 0; r < runs.length; r += 1) {
-          parentConverted += convertRun(parent, runs[r], rates, mode, tableSafe);
+          var pl = planRun(runs[r], rates);
+          planned.push({ run: runs[r], plans: pl });
+          if (pl.length > 0) any = true;
+        }
+        if (any) items.push({ parent: parent, planned: planned });
+      } catch (_) { /* one bad subtree must never break the page scan */ }
+    }
+
+    var shapes = new Map(); // planned entry -> column shape (replace only)
+    if (mode === 'replace') {
+      var byTable = new Map(); // table el -> Map(col -> shape)
+      var colOf = new Map(); // planned entry -> { table, col }
+      for (var a = 0; a < items.length; a += 1) {
+        var it = items[a];
+        var tc = null;
+        try { tc = tableColumnOf(it.parent); } catch (_) { tc = null; }
+        if (!tc) continue;
+        for (var b = 0; b < it.planned.length; b += 1) {
+          var entry = it.planned[b];
+          if (entry.plans.length !== 1) continue;
+          colOf.set(entry, tc);
+          var cols = byTable.get(tc.table);
+          if (!cols) { cols = new Map(); byTable.set(tc.table, cols); }
+          var sh = shapeOfValue(entry.plans[0].vnd);
+          var cur2 = cols.get(tc.col);
+          if (!cur2) {
+            cols.set(tc.col, { intLen: sh.intLen, frac: sh.frac, n: 1 });
+          } else {
+            cur2.intLen = Math.max(cur2.intLen, sh.intLen);
+            cur2.frac = Math.max(cur2.frac, sh.frac);
+            cur2.n += 1;
+          }
+        }
+      }
+      colOf.forEach(function (tc2, entry2) {
+        var cols2 = byTable.get(tc2.table);
+        var shape2 = cols2 && cols2.get(tc2.col);
+        if (shape2 && shape2.n >= 2) shapes.set(entry2, shape2);
+      });
+    }
+
+    for (var d = 0; d < items.length; d += 1) {
+      var item = items[d];
+      try {
+        var parentConverted = 0;
+        for (var e = 0; e < item.planned.length; e += 1) {
+          var en = item.planned[e];
+          parentConverted += convertRun(item.parent, en.run, rates, mode, tableSafe, en.plans, shapes.get(en) || null);
         }
         if (parentConverted > 0) {
           count += parentConverted;
@@ -947,7 +1087,14 @@
           return true;
         }
         if (msg && msg.type === 'vnd:count?') {
-          sendResponse({ ok: true, count: lastCount, hints: pageHints(typeof document !== 'undefined' ? document : null) });
+          // lastCount only tracks the most recent (incremental) scan, so an
+          // SPA rescan converting 0 new amounts would report 0 for a fully
+          // converted page. Count live markers in the DOM instead.
+          var domCount = 0;
+          try {
+            domCount = document.querySelectorAll('.vnd-replace, .vnd-badge, .vnd-subline, .vnd-hover').length;
+          } catch (_) { /* noop */ }
+          sendResponse({ ok: true, count: Math.max(lastCount, domCount), hints: pageHints(typeof document !== 'undefined' ? document : null) });
           return undefined;
         }
         if (msg && msg.type === 'vnd:restore' && typeof document !== 'undefined') {

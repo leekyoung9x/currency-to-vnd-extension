@@ -33,6 +33,13 @@
   overflow-wrap: anywhere;
 }
 
+/* Column-shape padding for replaced amounts in tables: invisible leading
+   digits so decimal marks stay in one straight line (mirrors the padding
+   trick sites like Surplus use for their own prices). */
+.vnd-pad {
+  visibility: hidden;
+}
+
 .vnd-replace {
   border-bottom: 1px dashed rgba(11, 107, 95, 0.55);
   cursor: help;

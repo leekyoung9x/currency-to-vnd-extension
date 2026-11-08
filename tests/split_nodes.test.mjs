@@ -119,13 +119,37 @@ export async function splitNodeTests() {
     ));
   }
 
-  // ---- replace mode ----
+  // ---- replace mode (+ column-shape alignment inside tables) ----
   {
     const document = await freshDoc();
     scanAndConvert(document, OPTS('replace'));
+    const visibleText = (el) => [...el.childNodes]
+      .filter((n) => !(n.nodeType === 1 && n.classList.contains('vnd-pad')))
+      .map((n) => n.textContent).join('');
     const rep = document.querySelector('tbody td .vnd-replace');
-    rows.push(row('split replace: visible price replaced by VND', '87,75 ₫', rep ? rep.textContent : '(missing)'));
+    rows.push(row('split replace: visible price replaced by VND', '87,75 ₫', rep ? visibleText(rep) : '(missing)'));
     rows.push(row('split replace: original kept in title', 'Gốc: $0.003375', rep ? rep.getAttribute('title') : '(missing)'));
+
+    // INPUT column: 87,75 vs 6.097.000 -> one shared shape: the small
+    // value gets invisible integer padding, the big one fixed decimals,
+    // so decimal marks line up exactly like the site's own prices.
+    const inputReps = [...document.querySelectorAll('tbody tr')].map((tr) => tr.children[1].querySelector('.vnd-replace'));
+    const padOf = (el) => el.querySelector('.vnd-pad')?.textContent ?? '';
+    rows.push(row('align: small value padded invisibly to column width', '0000000', padOf(inputReps[0])));
+    rows.push(row('align: big value gets fixed column decimals', '6.097.000,00 ₫', visibleText(inputReps[1])));
+    rows.push(row(
+      'align: effective widths equal within the column',
+      'equal',
+      (() => {
+        const w = (el) => (padOf(el) + visibleText(el).replace(/ ₫$/, '')).length;
+        return w(inputReps[0]) === w(inputReps[1]) ? 'equal' : `${w(inputReps[0])} vs ${w(inputReps[1])}`;
+      })(),
+    ));
+    rows.push(row('align: pad is aria-hidden', 'true', inputReps[0].querySelector('.vnd-pad')?.getAttribute('aria-hidden') ?? '(missing)'));
+    // COST column values share one shape already -> no padding injected.
+    const costReps = [...document.querySelectorAll('tbody tr')].map((tr) => tr.children[3].querySelector('.vnd-replace'));
+    rows.push(row('align: uniform column needs no pad', 0, costReps.filter((el) => el.querySelector('.vnd-pad')).length));
+
     restoreConverted(document);
     const cellText = document.querySelector('tbody td:nth-child(2)').textContent;
     rows.push(row(
