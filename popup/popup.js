@@ -241,4 +241,45 @@ document.addEventListener('DOMContentLoaded', async () => {
       $('refreshMsg').textContent = 'Đã khôi phục tỷ giá mặc định.';
     } catch (_) { /* noop */ }
   });
+
+  try {
+    const v = chrome.runtime?.getManifest?.().version;
+    if (v && $('extVersion')) $('extVersion').textContent = `v${v}`;
+  } catch (_) { /* noop */ }
+
+  // Get DOM (debug): inject shared/debug_dump.js into the active tab, run
+  // VndDebugDump.collect(document) there, download the result as JSON.
+  // The dump records exact childNodes trees of split-amount candidates —
+  // information a plain outerHTML copy loses (nodes get merged).
+  $('getDom')?.addEventListener('click', async () => {
+    const msg = $('getDomMsg');
+    msg.textContent = 'Đang lấy DOM…';
+    try {
+      const tab = await activeTab();
+      if (!tab?.id) throw new Error('không có tab đang mở');
+      await chrome.scripting.executeScript({
+        target: { tabId: tab.id },
+        files: ['shared/debug_dump.js'],
+      });
+      const [res] = await chrome.scripting.executeScript({
+        target: { tabId: tab.id },
+        func: () => (window.VndDebugDump ? window.VndDebugDump.collect(document) : null),
+      });
+      const dump = res?.result;
+      if (!dump) throw new Error('không lấy được dump (trang bị chặn inject?)');
+      const host = (() => { try { return new URL(dump.url || tab.url || '').hostname || 'page'; } catch (_) { return 'page'; } })();
+      const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+      const blob = new Blob([JSON.stringify(dump, null, 2)], { type: 'application/json' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = `vnd-dom-${host}-${stamp}.json`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+      msg.textContent = `Đã tải dump (${dump.candidatesTotal ?? 0} ứng viên, gửi file này để debug).`;
+    } catch (e) {
+      msg.textContent = `Lỗi Get DOM: ${e?.message || e}`;
+    }
+  });
 });

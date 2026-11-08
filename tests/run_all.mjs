@@ -12,6 +12,7 @@ import { layoutSafetyTests } from './layout_safety.test.mjs';
 import { detectionTests } from './detection.test.mjs';
 import { ratesFlowTests } from './rates_flow.test.mjs';
 import { splitNodeTests } from './split_nodes.test.mjs';
+import { debugDumpTests } from './debug_dump.test.mjs';
 
 const pad = (s, n) => {
   const t = String(s);
@@ -59,6 +60,11 @@ try {
   all.push(...(await splitNodeTests()));
 } catch (e) {
   all.push({ test: 'splitNodeTests() threw', expected: 'no throw', actual: String(e?.message || e), pass: false });
+}
+try {
+  all.push(...(await debugDumpTests()));
+} catch (e) {
+  all.push({ test: 'debugDumpTests() threw', expected: 'no throw', actual: String(e?.message || e), pass: false });
 }
 
 try {

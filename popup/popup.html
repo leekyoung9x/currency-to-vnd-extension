@@ -25,6 +25,10 @@
     <section class="card stats">
       <div class="stat-line"><span class="dot"></span><span id="statCount">Chưa quét trang này</span></div>
       <button id="rescan" class="btn ghost" type="button">Quét lại trang</button>
+      <div class="row">
+        <button id="getDom" class="btn ghost" type="button">Get DOM (debug)</button>
+        <span class="muted small" id="getDomMsg"></span>
+      </div>
     </section>
 
     <section class="card">
@@ -100,6 +104,8 @@
       <a href="../options/options.html" target="_blank" rel="noopener">Cài đặt chi tiết</a>
       <span>·</span>
       <a href="../verify/verify.html" target="_blank" rel="noopener">Trang tự kiểm tra</a>
+      <span>·</span>
+      <span id="extVersion" class="muted small"></span>
     </footer>
   </main>
   <script src="../shared/currency.js"></script>
