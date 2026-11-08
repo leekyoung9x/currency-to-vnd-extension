@@ -14,6 +14,7 @@
   var detectCurrencyAmounts = CurrencyUtils.detectCurrencyAmounts;
   var convertToVND = CurrencyUtils.convertToVND;
   var formatVND = CurrencyUtils.formatVND;
+  var inferHints = CurrencyUtils.inferHints;
   var DEFAULT_RATES = CurrencyUtils.DEFAULT_RATES || {};
   var STORAGE_KEYS = RateUtils.STORAGE_KEYS || {
     RATES: 'vnd_rates',
@@ -51,6 +52,11 @@
     if (Object.prototype.hasOwnProperty.call(DEFAULT_RATES, k)) currentRates[k] = DEFAULT_RATES[k];
   }
   var currentState = { enabled: DEFAULT_STATE.enabled, mode: DEFAULT_STATE.mode, tableSafe: DEFAULT_STATE.tableSafe };
+  /** User settings for bare `$` / `¥`: 'auto' or an ISO code. */
+  var currencySettings = { dollar: 'auto', yen: 'auto' };
+  var DOLLAR_KEY = 'vnd_dollar_currency';
+  var YEN_KEY = 'vnd_yen_currency';
+  var lastCount = 0;
   var debounceTimer = 0;
   var selfMutating = false;
 
@@ -212,6 +218,39 @@
     return false;
   }
 
+  /**
+   * Work out what a bare `$` / `¥` means on this page from the user
+   * settings, price metadata (`itemprop=priceCurrency`, `og:price:currency`),
+   * `<html lang>` and the hostname TLD.
+   */
+  function pageHints(base) {
+    var doc = base && base.nodeType === 9 ? base : (base && base.ownerDocument) || null;
+    var metas = [];
+    var lang = '';
+    var hostname = '';
+    try {
+      if (doc && doc.querySelectorAll) {
+        doc.querySelectorAll(
+          '[itemprop="priceCurrency"], meta[property="og:price:currency"], meta[property="product:price:currency"]'
+        ).forEach(function (el) {
+          var v = el.getAttribute('content') || el.textContent;
+          if (v) metas.push(v);
+        });
+      }
+      lang = (doc && doc.documentElement && doc.documentElement.getAttribute('lang')) || '';
+      var view = viewOf(doc);
+      hostname = (view && view.location && view.location.hostname) || '';
+    } catch (_) { /* best effort */ }
+    if (typeof inferHints !== 'function') return { dollar: 'USD', yen: 'JPY' };
+    return inferHints({
+      hostname: hostname,
+      lang: lang,
+      metaCurrencies: metas,
+      dollar: currencySettings.dollar,
+      yen: currencySettings.yen,
+    });
+  }
+
   /** Collect convertible text nodes under root via TreeWalker. */
   function collectTextNodes(base) {
     var doc = base && base.nodeType === 9 ? base : (base && base.ownerDocument !== undefined && base.ownerDocument !== null ? base.ownerDocument : null);
@@ -249,11 +288,21 @@
     return String(Math.round(r)).replace(/\B(?=(\d{3})+(?!\d))/g, '.');
   }
 
+  /** `1 CAD = 19.000 ₫` (+ note when the code was guessed from the page). */
+  function rateInfo(match, rates) {
+    var table = rates || {};
+    var rate = table[match.currency] !== undefined && table[match.currency] !== null
+      ? table[match.currency]
+      : DEFAULT_RATES[match.currency];
+    var text = '1 ' + match.currency + ' = ' + (Number(rate) >= 100 ? formatRateBadge(rate) + ' ₫' : formatVND(rate));
+    return match.assumed ? text + ' · đoán theo trang, đổi trong popup' : text;
+  }
+
   /**
    * Convert one text node in place. Returns number of converted amounts.
    * Wraps the node in a marked span so restore() + skip-logic work.
    */
-  function convertTextNode(textNode, rates, mode, tableSafe) {
+  function convertTextNode(textNode, rates, mode, tableSafe, hints) {
     if (rates === undefined) rates = currentRates;
     if (mode === undefined) mode = currentState.mode;
     if (tableSafe === undefined || tableSafe === null) tableSafe = currentState.tableSafe !== false;
@@ -261,7 +310,8 @@
     var original = textNode.nodeValue;
     if (!original || !original.trim()) return 0;
     if (isSkipped(textNode)) return 0;
-    var matches = detectCurrencyAmounts(original);
+    if (!hints) hints = pageHints(textNode.ownerDocument);
+    var matches = detectCurrencyAmounts(original, rates, hints);
     if (matches.length === 0) return 0;
 
     var doc = textNode.ownerDocument;
@@ -308,21 +358,20 @@
       if (vnd == null) continue;
       pushText(original.slice(cursor, m.index));
       var label = formatVND(vnd);
+      var info = rateInfo(m, rates);
       if (mode === 'replace') {
         var s = doc.createElement('span');
         s.setAttribute('class', 'vnd-replace');
         s.setAttribute('data-original', m.raw);
         s.setAttribute('title', 'Gốc: ' + m.raw);
+        s.setAttribute('data-vnd-rate', info);
         s.textContent = label;
         wrapper.appendChild(s);
       } else if (mode === 'hover' || wantHoverFallback) {
         var h = doc.createElement('span');
         h.setAttribute('class', 'vnd-hover');
         h.setAttribute('data-original', m.raw);
-        var rate = (rates || {})[m.currency] !== undefined && (rates || {})[m.currency] !== null
-          ? (rates || {})[m.currency]
-          : DEFAULT_RATES[m.currency];
-        h.setAttribute('data-vnd-tooltip', '≈ ' + label + ' (Tỷ giá: ' + formatRateBadge(rate) + ')');
+        h.setAttribute('data-vnd-tooltip', '≈ ' + label + ' (' + info + ')');
         h.textContent = m.raw;
         wrapper.appendChild(h);
       } else {
@@ -331,6 +380,7 @@
         var b = doc.createElement('span');
         b.setAttribute('class', 'vnd-badge');
         b.setAttribute('data-original', m.raw);
+        b.setAttribute('title', info);
         b.textContent = ' (≈ ' + label + ')';
         wrapper.appendChild(b);
       }
@@ -579,6 +629,7 @@
     if (!scanRoot) return { count: 0, nodes: 0 };
     var count = 0;
     var nodes = 0;
+    var hints = options.hints || pageHints(scanRoot);
     var found = collectTextNodes(scanRoot);
     for (var i = 0; i < found.length; i += 1) {
       var t = found[i];
@@ -587,7 +638,7 @@
         // contains() may be missing on partial JSDOM nodes; fall back to parent check.
         if (!t.parentNode) continue;
       }
-      var c = convertTextNode(t, rates, mode, tableSafe);
+      var c = convertTextNode(t, rates, mode, tableSafe, hints);
       if (c > 0) {
         count += c;
         nodes += 1;
@@ -740,6 +791,7 @@
             if (res.rates) {
               setRates(res.rates);
             }
+            currencySettings = { dollar: res.dollar || 'auto', yen: res.yen || 'auto' };
             currentState = {
               enabled: res.enabled !== undefined && res.enabled !== null ? res.enabled : true,
               mode: res.mode !== undefined && res.mode !== null ? res.mode : 'append',
@@ -757,7 +809,8 @@
   function loadFromStorage() {
     try {
       if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
-        return chrome.storage.local.get([STORAGE_KEYS.ENABLED, STORAGE_KEYS.MODE, STORAGE_KEYS.TABLE_SAFE]).then(function (got) {
+        return chrome.storage.local.get([STORAGE_KEYS.ENABLED, STORAGE_KEYS.MODE, STORAGE_KEYS.TABLE_SAFE, DOLLAR_KEY, YEN_KEY]).then(function (got) {
+          currencySettings = { dollar: (got && got[DOLLAR_KEY]) || 'auto', yen: (got && got[YEN_KEY]) || 'auto' };
           currentState = {
             enabled: got && got[STORAGE_KEYS.ENABLED] !== undefined && got[STORAGE_KEYS.ENABLED] !== null
               ? got[STORAGE_KEYS.ENABLED]
@@ -776,7 +829,7 @@
   }
 
   function reportCount(count) {
-    void count;
+    lastCount = Number(count) || 0;
     try {
       if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.id) {
         var p = chrome.runtime.sendMessage({ type: 'vnd:report-count', count: count });
@@ -841,6 +894,17 @@
             : true;
           needRescan = true;
         }
+        if (changes[STORAGE_KEYS.RATES] || changes[STORAGE_KEYS.CUSTOM_RATES] ||
+            changes[DOLLAR_KEY] || changes[YEN_KEY]) {
+          // Rates or `$` / `¥` settings changed: reload merged state, then redraw.
+          loadInitialState().then(function () {
+            if (currentState.enabled === false || typeof document === 'undefined') return;
+            try {
+              restoreConverted(document);
+              reportCount(scanAndConvert(document).count);
+            } catch (_) { /* noop */ }
+          });
+        }
         if (needRescan && typeof document !== 'undefined') {
           try {
             restoreConverted(document);
@@ -882,6 +946,10 @@
           }
           return true;
         }
+        if (msg && msg.type === 'vnd:count?') {
+          sendResponse({ ok: true, count: lastCount, hints: pageHints(typeof document !== 'undefined' ? document : null) });
+          return undefined;
+        }
         if (msg && msg.type === 'vnd:restore' && typeof document !== 'undefined') {
           currentState.enabled = false;
           var out = restoreConverted(document);
@@ -906,6 +974,7 @@
     isVisuallyHiddenEl: isVisuallyHiddenEl,
     isInsideTable: isInsideTable,
     isTruncatedContext: isTruncatedContext,
+    pageHints: pageHints,
     collectTextNodes: collectTextNodes,
     convertTextNode: convertTextNode,
     scanSplitAmounts: scanSplitAmounts,

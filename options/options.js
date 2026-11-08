@@ -10,6 +10,7 @@ var convertAndFormat = CurrencyUtils.convertAndFormat;
 
 const $ = (id) => document.getElementById(id);
 const CODES = Object.keys(DEFAULT_RATES);
+let baseRates = { ...DEFAULT_RATES };
 
 async function getState() {
   try {
@@ -38,6 +39,18 @@ function renderRates(rates) {
   }
 }
 
+/** Inputs that differ from the live/default table become custom overrides. */
+function readOverrides() {
+  const out = {};
+  document.querySelectorAll('#rateGrid input').forEach((el) => {
+    const n = Number(el.value);
+    const code = el.dataset.code;
+    if (!code || !Number.isFinite(n) || n <= 0) return;
+    if (Math.abs(n - Number(baseRates[code])) > 1e-9) out[code] = n;
+  });
+  return out;
+}
+
 function readRates() {
   const out = { ...DEFAULT_RATES };
   document.querySelectorAll('#rateGrid input').forEach((el) => {
@@ -53,6 +66,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   document.querySelectorAll('input[name="mode"]').forEach((r) => {
     r.checked = r.value === (state.mode || 'append');
   });
+  baseRates = { ...DEFAULT_RATES, ...(state.baseRates || {}) };
   renderRates(state.rates || DEFAULT_RATES);
   $('updatedAt').textContent = state.updatedAt
     ? `Cập nhật: ${new Date(Number(state.updatedAt)).toLocaleString('vi-VN')}`
@@ -77,6 +91,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     try {
       const res = await chrome.runtime.sendMessage({ type: 'vnd:refresh-rates' });
       if (res?.ok) {
+        baseRates = { ...DEFAULT_RATES, ...(res.baseRates || {}) };
         renderRates(res.rates);
         $('updatedAt').textContent = `Cập nhật: ${new Date(Number(res.updatedAt)).toLocaleString('vi-VN')}`;
         $('msg').textContent = 'Đã cập nhật xong.';
@@ -89,10 +104,10 @@ document.addEventListener('DOMContentLoaded', async () => {
   });
 
   $('reset').addEventListener('click', async () => {
-    renderRates({ ...DEFAULT_RATES });
+    // Drop custom overrides only; keep the live (online) table.
+    renderRates(baseRates);
     try {
       await chrome.storage.local.remove(['vnd_custom_rates']);
-      await chrome.storage.local.set({ vnd_rates: { ...DEFAULT_RATES } });
     } catch (_) { /* noop */ }
     $('msg').textContent = 'Đã khôi phục tỷ giá mặc định.';
   });
@@ -113,7 +128,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     clearTimeout(t);
     t = setTimeout(async () => {
       try {
-        await chrome.storage.local.set({ vnd_rates: readRates(), vnd_rates_updated_at: Date.now() });
+        await chrome.storage.local.set({ vnd_custom_rates: readOverrides() });
       } catch (_) { /* noop */ }
     }, 400);
   });

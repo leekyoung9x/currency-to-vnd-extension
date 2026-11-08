@@ -9,6 +9,8 @@ import { domScanTests } from './dom_scan.test.mjs';
 import { manifestTests } from './manifest.test.mjs';
 import { toggleTests } from './toggle.test.mjs';
 import { layoutSafetyTests } from './layout_safety.test.mjs';
+import { detectionTests } from './detection.test.mjs';
+import { ratesFlowTests } from './rates_flow.test.mjs';
 import { splitNodeTests } from './split_nodes.test.mjs';
 import { debugDumpTests } from './debug_dump.test.mjs';
 
@@ -63,6 +65,17 @@ try {
   all.push(...(await debugDumpTests()));
 } catch (e) {
   all.push({ test: 'debugDumpTests() threw', expected: 'no throw', actual: String(e?.message || e), pass: false });
+}
+
+try {
+  all.push(...(await detectionTests()));
+} catch (e) {
+  all.push({ test: 'detectionTests() threw', expected: 'no throw', actual: String(e?.message || e), pass: false });
+}
+try {
+  all.push(...(await ratesFlowTests()));
+} catch (e) {
+  all.push({ test: 'ratesFlowTests() threw', expected: 'no throw', actual: String(e?.message || e), pass: false });
 }
 
 printTable(all);

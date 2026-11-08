@@ -26,73 +26,219 @@
     INR: 310,
     TWD: 850,
     HKD: 3350,
+    NZD: 15500,
+    CHF: 32500,
+    MXN: 1400,
+    BRL: 4800,
+    PHP: 450,
+    MYR: 6100,
+    IDR: 1.6,
+    RUB: 320,
+    TRY: 620,
+    SEK: 2750,
+    NOK: 2600,
+    DKK: 4050,
+    PLN: 7100,
+    ZAR: 1480,
+    AED: 7080,
   });
 
-  /** Symbol (or multi-char prefix) -> ISO code. Order matters: longest first. */
+  /**
+   * Prefix symbol -> ISO code. Longest match wins (sorted below), so `CA$`
+   * is never read as a bare `$`. Letter-based prefixes require a non-letter
+   * on their left (see CURRENCY_RE), so `XCA$5` / `FORM 5` never match.
+   */
   var SYMBOL_TO_CODE = Object.freeze({
+    'US$': 'USD',
+    'CA$': 'CAD',
     'AU$': 'AUD',
+    'NZ$': 'NZD',
+    'MX$': 'MXN',
     'NT$': 'TWD',
     'HK$': 'HKD',
+    'SG$': 'SGD',
+    'CN¥': 'CNY',
+    'JP¥': 'JPY',
     'C$': 'CAD',
     'A$': 'AUD',
     'S$': 'SGD',
+    'R$': 'BRL',
+    'RM': 'MYR',
+    'Rp': 'IDR',
     '$': 'USD',
     '€': 'EUR',
     '£': 'GBP',
     '¥': 'JPY',
+    '￥': 'JPY',
     '₩': 'KRW',
     '₹': 'INR',
     '฿': 'THB',
+    '₱': 'PHP',
+    '₽': 'RUB',
+    '₺': 'TRY',
   });
 
-  var ISO_CODES = Object.freeze([
-    'USD', 'EUR', 'GBP', 'JPY', 'CNY', 'KRW',
-    'CAD', 'AUD', 'SGD', 'INR', 'THB', 'TWD', 'HKD',
-  ]);
+  /** Symbols allowed AFTER the number (`29,99 €`, `100円`, `50 zł`). */
+  var SUFFIX_TO_CODE = Object.freeze({
+    '€': 'EUR',
+    '£': 'GBP',
+    '¥': 'JPY',
+    '￥': 'JPY',
+    '円': 'JPY',
+    '元': 'CNY',
+    '₩': 'KRW',
+    '₹': 'INR',
+    '฿': 'THB',
+    '₱': 'PHP',
+    '₽': 'RUB',
+    '₺': 'TRY',
+    'zł': 'PLN',
+    '$': 'USD',
+  });
+
+  /**
+   * Symbols shared by several currencies. Their code comes from page hints
+   * (`{ dollar, yen }`), falling back to the SYMBOL_TO_CODE default.
+   */
+  var AMBIGUOUS_SYMBOLS = Object.freeze({ '$': 'dollar', '¥': 'yen', '￥': 'yen' });
+  var DOLLAR_CODES = Object.freeze(['USD', 'CAD', 'AUD', 'NZD', 'SGD', 'HKD', 'TWD', 'MXN']);
+  var YEN_CODES = Object.freeze(['JPY', 'CNY']);
+
+  var ISO_CODES = Object.freeze(Object.keys(DEFAULT_RATES));
+
+  /** Non-ISO spellings of a code. */
+  var CODE_ALIASES = Object.freeze({ RMB: 'CNY' });
+
+  /** Currencies normally written without decimals (`¥1.234` = 1234). */
+  var ZERO_DECIMAL = Object.freeze(['JPY', 'KRW', 'IDR', 'VND']);
+  /** Currencies whose locales use `.` as thousands mark (`€1.234` = 1234). */
+  var DOT_THOUSANDS = Object.freeze(['EUR', 'BRL', 'TRY', 'DKK', 'NOK', 'PLN', 'RUB', 'IDR']);
+
+  /** `$1.5M`, `€2 bn`, `$10k`, `$3 million` -> multiplier. */
+  var MAGNITUDES = Object.freeze({
+    k: 1e3, K: 1e3, thousand: 1e3,
+    m: 1e6, M: 1e6, mn: 1e6, million: 1e6,
+    B: 1e9, bn: 1e9, billion: 1e9,
+    trillion: 1e12,
+  });
 
   var ESC = function (s) { return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); };
-  var SYMBOLS_SORTED = Object.keys(SYMBOL_TO_CODE).sort(function (a, b) { return b.length - a.length; });
-  var SYMBOL_ALT = SYMBOLS_SORTED.map(ESC).join('|');
-  var CODE_ALT = ISO_CODES.join('|');
+  var byLengthDesc = function (a, b) { return b.length - a.length; };
+  var SYMBOL_ALT = Object.keys(SYMBOL_TO_CODE).sort(byLengthDesc).map(ESC).join('|');
+  var SUFFIX_ALT = Object.keys(SUFFIX_TO_CODE).sort(byLengthDesc).map(ESC).join('|');
+  var CODE_ALT = ISO_CODES.concat(Object.keys(CODE_ALIASES)).join('|');
+  var MAG_ALT = Object.keys(MAGNITUDES).sort(byLengthDesc).join('|');
+
+  // A number always starts AND ends with a digit, so trailing punctuation
+  // (`$1,500,` / `$5.`) is never swallowed. NBSP-grouped `1 234,56` allowed.
+  var NUM = '\\d{1,3}(?:[\\u00A0\\u202F]\\d{3})+(?:[.,]\\d+)?|\\d(?:[\\d.,]*\\d)?';
+  var MAG = '\\s?(?:' + MAG_ALT + ')(?![A-Za-z])';
 
   /**
    * Master currency matcher. Each alternative captures:
-   *  - Symbol-first:  sign? SYMBOL number      (e.g. $3.30, -$5, ~$5.00, C$10)
-   *  - Code-first:    sign? CODE number        (e.g. USD 10, -$5 USD not matched; sign inside)
-   *  - Code-last:     sign? number CODE        (e.g. 10 USD, 15.5 EUR, 100 JPY)
-   * A global search finds every leg of `$0.070/$0.350` and `$10 - $20` separately.
+   *  - Symbol-first:  SYMBOL number mag? CODE?  (`$3.30`, `C$10`, `$1.5M`, `$10 CAD`)
+   *  - Code-first:    CODE SYMBOL? number mag?  (`USD 10`, `USD $10`, `RMB 50`)
+   *  - Number-first:  number mag? CODE|SYMBOL   (`10 USD`, `29,99 €`, `100円`)
+   * The sign must touch the amount, so the dash in `$10 - $20` is a range,
+   * not a negative second leg. A global search finds every leg separately.
    */
   var CURRENCY_RE = new RegExp(
-    '(?:(?<sign>[-+~])\\s*)?(?:' +
-      '(?<sym>' + SYMBOL_ALT + ')\\s*(?<numA>\\d[\\d.,]*)' +
-      '|(?<codeA>' + CODE_ALT + ')\\s+(?<numB>\\d[\\d.,]*)' +
-      '|(?<numC>\\d[\\d.,]*)\\s*(?<codeB>' + CODE_ALT + ')' +
+    '(?:(?<![\\w])(?<sign>[-+~\\u2212]))?(?:' +
+      '(?<![A-Za-z])(?<sym>' + SYMBOL_ALT + ')\\s*(?<numA>' + NUM + ')(?<magA>' + MAG + ')?' +
+        '(?:\\s?(?<codeC>' + CODE_ALT + ')(?![A-Za-z]))?' +
+      '|(?<![A-Za-z])(?<codeA>' + CODE_ALT + ')\\s*(?:' + SYMBOL_ALT + ')?\\s*(?<numB>' + NUM + ')(?<magB>' + MAG + ')?' +
+      '|(?<![\\w.,])(?<numC>' + NUM + ')(?<magC>' + MAG + ')?\\s?' +
+        '(?:(?<codeB>' + CODE_ALT + ')(?![A-Za-z])|(?<symB>' + SUFFIX_ALT + ')(?!\\s?\\d))' +
     ')',
     'g'
   );
 
-  var CODE_ONLY_RE = new RegExp('^(?:' + CODE_ALT + ')$', 'i');
+  function hasOwn(obj, key) {
+    return Object.prototype.hasOwnProperty.call(obj, key);
+  }
+
+  function codeFromText(code) {
+    var up = String(code).toUpperCase();
+    if (hasOwn(CODE_ALIASES, up)) return CODE_ALIASES[up];
+    return hasOwn(DEFAULT_RATES, up) ? up : null;
+  }
 
   /** Normalize a symbol or code string to an ISO code, or null. */
   function normalizeCurrency(symOrCode) {
     if (symOrCode == null) return null;
     var s = String(symOrCode).trim();
-    if (Object.prototype.hasOwnProperty.call(SYMBOL_TO_CODE, s)) return SYMBOL_TO_CODE[s];
-    var up = s.toUpperCase();
-    if (CODE_ONLY_RE.test(up) && Object.prototype.hasOwnProperty.call(DEFAULT_RATES, up)) return up;
-    // Bare '¥' ambiguity: JPY vs CNY — default JPY (documented).
-    return null;
+    if (hasOwn(SYMBOL_TO_CODE, s)) return SYMBOL_TO_CODE[s];
+    if (hasOwn(SUFFIX_TO_CODE, s)) return SUFFIX_TO_CODE[s];
+    if (!/^[A-Za-z]{3}$/.test(s)) return null;
+    return codeFromText(s);
+  }
+
+  /**
+   * Clean page hints: `{ dollar, yen }` must name a currency of the right
+   * family, otherwise the documented defaults (USD, JPY) apply.
+   */
+  function normalizeHints(hints) {
+    var h = hints || {};
+    var dollar = h.dollar ? String(h.dollar).toUpperCase() : '';
+    var yen = h.yen ? String(h.yen).toUpperCase() : '';
+    return {
+      dollar: DOLLAR_CODES.indexOf(dollar) >= 0 ? dollar : 'USD',
+      yen: YEN_CODES.indexOf(yen) >= 0 ? yen : 'JPY',
+    };
+  }
+
+  var TLD_DOLLAR = Object.freeze({
+    ca: 'CAD', au: 'AUD', nz: 'NZD', sg: 'SGD', hk: 'HKD', tw: 'TWD', mx: 'MXN',
+  });
+  var REGION_DOLLAR = Object.freeze({
+    CA: 'CAD', AU: 'AUD', NZ: 'NZD', SG: 'SGD', HK: 'HKD', TW: 'TWD', MX: 'MXN',
+  });
+
+  /**
+   * Guess which currency a bare `$` / `¥` means on a page.
+   * `info = { hostname, lang, metaCurrencies: [...], dollar, yen }` where
+   * `dollar` / `yen` are user settings ('auto' or an ISO code).
+   * Priority: user setting > page price metadata > lang region > TLD > default.
+   */
+  function inferHints(info) {
+    var i = info || {};
+    var out = { dollar: null, yen: null };
+    if (i.dollar && i.dollar !== 'auto') out.dollar = String(i.dollar).toUpperCase();
+    if (i.yen && i.yen !== 'auto') out.yen = String(i.yen).toUpperCase();
+
+    var metas = Array.isArray(i.metaCurrencies) ? i.metaCurrencies : [];
+    for (var m = 0; m < metas.length; m += 1) {
+      var code = String(metas[m] || '').trim().toUpperCase();
+      if (!out.dollar && DOLLAR_CODES.indexOf(code) >= 0) out.dollar = code;
+      if (!out.yen && YEN_CODES.indexOf(code) >= 0) out.yen = code;
+    }
+
+    var lang = String(i.lang || '');
+    var region = (lang.split(/[-_]/)[1] || '').toUpperCase();
+    if (!out.dollar && hasOwn(REGION_DOLLAR, region)) out.dollar = REGION_DOLLAR[region];
+    if (!out.yen && /^zh/i.test(lang)) out.yen = 'CNY';
+    if (!out.yen && /^ja/i.test(lang)) out.yen = 'JPY';
+
+    var host = String(i.hostname || '').toLowerCase().replace(/\.$/, '');
+    var tld = host.slice(host.lastIndexOf('.') + 1);
+    if (!out.dollar && hasOwn(TLD_DOLLAR, tld)) out.dollar = TLD_DOLLAR[tld];
+    if (!out.yen && tld === 'cn') out.yen = 'CNY';
+    if (!out.yen && tld === 'jp') out.yen = 'JPY';
+
+    return normalizeHints(out);
   }
 
   /**
    * Parse a localized number string.
    * Supports US `1,234.56` and EU `1.234,56`, plus single-separator forms.
+   * `currency` (optional) resolves `1.234`: thousands for JPY/KRW/EUR-style
+   * currencies, decimal otherwise (`$1.250` per-token prices stay 1.25).
    * Returns a finite Number, or NaN when unparseable.
    */
-  function parseNumber(raw) {
+  function parseNumber(raw, currency) {
     if (typeof raw !== 'number') {
       if (raw == null) return NaN;
-      raw = String(raw).trim().replace(/[\s\u00A0\u202F']/g, '');
+      raw = String(raw).trim().replace(/[\s  ']/g, '');
     } else {
       return raw;
     }
@@ -123,108 +269,122 @@
         norm = raw.replace(/,/g, '.');
       }
     } else if (hasDot) {
-      var dots = (raw.match(/\./g) || []).length;
-      if (dots > 1) {
+      var dotParts = raw.split('.');
+      var code = currency ? String(currency).toUpperCase() : '';
+      var thousandsStyle = ZERO_DECIMAL.indexOf(code) >= 0 || DOT_THOUSANDS.indexOf(code) >= 0;
+      if (dotParts.length > 2) {
         // `1.234.567` — thousands dots (EU). Single-dot stays a decimal (US).
         norm = raw.replace(/\./g, '');
+      } else if (thousandsStyle && /^\d{3}$/.test(dotParts[1]) && !/^[-+]?0*$/.test(dotParts[0])) {
+        // `¥1.234` / `€2.500` / `Rp 15.000`: single dot + 3 digits = thousands.
+        norm = dotParts.join('');
       }
     }
     var v = Number(norm);
     return Number.isFinite(v) ? v : NaN;
   }
 
-  /**
-   * Parse one currency amount string (e.g. `$3.30`, `15.50 EUR`, `USD 10`, `-$5`).
-   * Returns `{ currency, amount, sign, raw }` or null.
-   */
-  function parseCurrencyAmount(raw) {
-    if (raw == null) return null;
-    var text = String(raw).trim();
-    if (!text) return null;
-    CURRENCY_RE.lastIndex = 0;
-    var m = CURRENCY_RE.exec(text);
-    if (!m || m.index !== 0) {
-      // Allow leading whitespace only; otherwise no match at start => null.
-      // Fall back: try a full anchored re-test for embedded leading junk.
-      CURRENCY_RE.lastIndex = 0;
-      var m2 = CURRENCY_RE.exec(text);
-      if (!m2) return null;
-      // Accept only if match covers the whole trimmed string.
-      if (m2.index !== 0 || m2[0].length !== text.length) return null;
-      return buildParsed(m2, text);
-    }
-    if (m[0].length !== text.length) return null;
-    return buildParsed(m, text);
+  function resolveSymbol(sym, hints) {
+    var family = AMBIGUOUS_SYMBOLS[sym];
+    if (family === 'dollar') return { code: hints.dollar, assumed: true };
+    if (family === 'yen') return { code: hints.yen, assumed: true };
+    return { code: SYMBOL_TO_CODE[sym], assumed: false };
   }
 
-  function buildParsed(m, text) {
+  /** Turn one CURRENCY_RE match into `{ raw, currency, amount, index, assumed }`. */
+  function buildMatch(m, hints) {
     var g = m.groups || {};
-    var sign = g.sign === '-' ? -1 : 1;
+    var sign = g.sign === '-' || g.sign === '−' ? -1 : 1;
     var currency = null;
     var numStr = null;
+    var mag = null;
+    var assumed = false;
     if (g.sym) {
-      currency = SYMBOL_TO_CODE[g.sym];
+      var r = resolveSymbol(g.sym, hints);
+      currency = r.code;
+      assumed = r.assumed;
+      // `$10 CAD`: a trailing code settles an ambiguous symbol.
+      if (assumed && g.codeC) {
+        currency = codeFromText(g.codeC);
+        assumed = false;
+      }
       numStr = g.numA;
+      mag = g.magA;
     } else if (g.codeA) {
-      currency = g.codeA.toUpperCase();
+      currency = codeFromText(g.codeA);
       numStr = g.numB;
+      mag = g.magB;
     } else if (g.codeB) {
-      currency = g.codeB.toUpperCase();
+      currency = codeFromText(g.codeB);
       numStr = g.numC;
+      mag = g.magC;
+    } else if (g.symB) {
+      if (hasOwn(AMBIGUOUS_SYMBOLS, g.symB)) {
+        var rs = resolveSymbol(g.symB, hints);
+        currency = rs.code;
+        assumed = rs.assumed;
+      } else {
+        currency = SUFFIX_TO_CODE[g.symB];
+      }
+      numStr = g.numC;
+      mag = g.magC;
     }
     if (!currency || numStr == null) return null;
-    var amount = parseNumber(numStr);
+    var amount = parseNumber(numStr, currency);
     if (!Number.isFinite(amount)) return null;
-    return { currency: currency, amount: sign * amount, sign: sign, raw: text };
+    if (mag) amount *= MAGNITUDES[mag.trim()];
+    return { raw: m[0], currency: currency, amount: sign * amount, index: m.index, assumed: assumed };
   }
 
   /**
    * Find every currency amount inside a free-text string.
-   * Returns array of `{ raw, currency, amount, index }` in source order.
+   * `hints = { dollar, yen }` decides what a bare `$` / `¥` means.
+   * Returns array of `{ raw, currency, amount, index, assumed }` in source order;
+   * `assumed` is true when the code came from a hint, not the text itself.
    */
-  function detectCurrencyAmounts(text, _rates) {
+  function detectCurrencyAmounts(text, _rates, hints) {
     if (text == null) return [];
     var src = String(text);
+    var h = normalizeHints(hints);
     var out = [];
     CURRENCY_RE.lastIndex = 0;
     var m;
     while ((m = CURRENCY_RE.exec(src)) !== null) {
-      var g = m.groups || {};
-      var sign = g.sign === '-' ? -1 : 1;
-      var currency = null;
-      var numStr = null;
-      if (g.sym) {
-        currency = SYMBOL_TO_CODE[g.sym];
-        numStr = g.numA;
-      } else if (g.codeA) {
-        currency = g.codeA.toUpperCase();
-        numStr = g.numB;
-      } else if (g.codeB) {
-        currency = g.codeB.toUpperCase();
-        numStr = g.numC;
-      }
-      if (!currency || numStr == null) continue;
-      // Guard: code-first needs the code boundary (regex already word-safe for
-      // symbol forms; e.g. avoid matching 'USDC' as 'USD' + junk).
-      var after = src[m.index + m[0].length];
-      if ((g.codeA || g.codeB) && after && /[A-Za-z]/.test(after)) continue;
-      var amount = parseNumber(numStr);
-      if (!Number.isFinite(amount)) continue;
-      out.push({ raw: m[0], currency: currency, amount: sign * amount, index: m.index });
       // Safety against zero-length loops (regex always consumes, but be sure).
-      if (m[0].length === 0) CURRENCY_RE.lastIndex += 1;
+      if (m[0].length === 0) {
+        CURRENCY_RE.lastIndex += 1;
+        continue;
+      }
+      var found = buildMatch(m, h);
+      if (found) out.push(found);
     }
     return out;
   }
 
+  /**
+   * Parse one currency amount string (e.g. `$3.30`, `15.50 EUR`, `USD 10`, `-$5`).
+   * The whole trimmed string must be a single amount.
+   * Returns `{ currency, amount, sign, raw, assumed }` or null.
+   */
+  function parseCurrencyAmount(raw, hints) {
+    if (raw == null) return null;
+    var text = String(raw).trim();
+    if (!text) return null;
+    var found = detectCurrencyAmounts(text, null, hints);
+    if (found.length !== 1) return null;
+    var f = found[0];
+    if (f.index !== 0 || f.raw.length !== text.length) return null;
+    return { currency: f.currency, amount: f.amount, sign: f.amount < 0 ? -1 : 1, raw: text, assumed: f.assumed };
+  }
+
   /** True when the text contains at least one currency amount. */
-  function containsCurrency(text) {
-    return detectCurrencyAmounts(text).length > 0;
+  function containsCurrency(text, hints) {
+    return detectCurrencyAmounts(text, null, hints).length > 0;
   }
 
   /** Count currency amounts inside a text (legs of `a/b` count separately). */
-  function countCurrencyAmounts(text) {
-    return detectCurrencyAmounts(text).length;
+  function countCurrencyAmounts(text, hints) {
+    return detectCurrencyAmounts(text, null, hints).length;
   }
 
   /**
@@ -235,12 +395,12 @@
     if (rates === undefined) rates = DEFAULT_RATES;
     var code = normalizeCurrency(currency);
     if (code == null) return null;
-    var n = typeof amount === 'number' ? amount : parseNumber(amount);
+    var n = typeof amount === 'number' ? amount : parseNumber(amount, code);
     if (!Number.isFinite(n)) return null;
     var table = rates && typeof rates === 'object' ? rates : DEFAULT_RATES;
     var rate = table[code];
     if (rate == null) rate = DEFAULT_RATES[code];
-    if (!Number.isFinite(Number(rate))) return null;
+    if (!Number.isFinite(Number(rate)) || Number(rate) <= 0) return null;
     return n * Number(rate);
   }
 
@@ -282,9 +442,9 @@
    * Parse + convert + format in one step.
    * Returns `{ currency, amount, vnd, text }` or null.
    */
-  function convertAndFormat(raw, rates) {
+  function convertAndFormat(raw, rates, hints) {
     if (rates === undefined) rates = DEFAULT_RATES;
-    var p = parseCurrencyAmount(raw);
+    var p = parseCurrencyAmount(raw, hints);
     if (!p) return null;
     var vnd = convertToVND(p.amount, p.currency, rates);
     if (vnd == null) return null;
@@ -300,8 +460,13 @@
     DEFAULT_RATES: DEFAULT_RATES,
     DEFAULT_USD_VND: DEFAULT_USD_VND,
     SYMBOL_TO_CODE: SYMBOL_TO_CODE,
+    SUFFIX_TO_CODE: SUFFIX_TO_CODE,
+    DOLLAR_CODES: DOLLAR_CODES,
+    YEN_CODES: YEN_CODES,
     ISO_CODES: ISO_CODES,
     normalizeCurrency: normalizeCurrency,
+    normalizeHints: normalizeHints,
+    inferHints: inferHints,
     parseNumber: parseNumber,
     parseCurrencyAmount: parseCurrencyAmount,
     detectCurrencyAmounts: detectCurrencyAmounts,

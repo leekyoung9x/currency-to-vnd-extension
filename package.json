@@ -1,6 +1,6 @@
 {
   "name": "currency-to-vnd-extension",
-  "version": "1.0.2",
+  "version": "1.1.1",
   "description": "Chrome MV3 Extension to detect and convert foreign currencies to VND on web pages",
   "type": "module",
   "scripts": {

@@ -11,7 +11,7 @@
     <div class="brand">
       <span class="coin">₫</span>
       <div>
-        <h1>Currency → VND</h1>
+        <h1>Currency → VND <span id="extVersionHead" class="ver-chip"></span></h1>
         <p class="sub">Quy đổi tiền tệ trên mọi trang web</p>
       </div>
     </div>
@@ -51,6 +51,35 @@
         <input type="checkbox" id="tableSafe" checked />
         <span><strong>Bảo vệ bảng (Table-safe mode)</strong><small> — không giãn cột, không đè mất nút Save/Clear</small></span>
       </label>
+    </section>
+
+    <section class="card">
+      <h2>Nhận diện ký hiệu</h2>
+      <div class="sym-grid">
+        <label class="field">
+          <span>Ký hiệu $ là</span>
+          <select id="dollarSel">
+            <option value="auto">Tự động theo trang</option>
+            <option value="USD">USD — Đô la Mỹ</option>
+            <option value="CAD">CAD — Đô la Canada</option>
+            <option value="AUD">AUD — Đô la Úc</option>
+            <option value="NZD">NZD — Đô la New Zealand</option>
+            <option value="SGD">SGD — Đô la Singapore</option>
+            <option value="HKD">HKD — Đô la Hồng Kông</option>
+            <option value="TWD">TWD — Đô la Đài Loan</option>
+            <option value="MXN">MXN — Peso Mexico</option>
+          </select>
+        </label>
+        <label class="field">
+          <span>Ký hiệu ¥ là</span>
+          <select id="yenSel">
+            <option value="auto">Tự động theo trang</option>
+            <option value="JPY">JPY — Yên Nhật</option>
+            <option value="CNY">CNY — Nhân dân tệ</option>
+          </select>
+        </label>
+      </div>
+      <p class="muted small" id="hintNow">Ký hiệu rõ ràng như CA$, A$, US$, CN¥ luôn được nhận đúng.</p>
     </section>
 
     <section class="card">
