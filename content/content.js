@@ -38,6 +38,8 @@
   );
   var CONVERTED_ATTR = 'data-vnd-converted';
   var ORIGINAL_ATTR = 'data-original-text';
+  var INSERTED_ATTR = 'data-vnd-inserted';
+  var UNWRAP_ATTR = 'data-vnd-unwrap';
   var CONVERTED_CLASS = 'vnd-converted';
 
   var DISPLAY_MODES = Object.freeze(['append', 'replace', 'hover']);
@@ -71,6 +73,51 @@
     return 4; // NodeFilter.SHOW_TEXT
   }
 
+  /**
+   * FIX-5: True when an element (and its subtree) is visually hidden, e.g.
+   * Tailwind/Bootstrap `sr-only` / `visually-hidden` screen-reader twins or
+   * `display: none`. React money components (Surplus Intelligence) render a
+   * full `$0.003375` string ONLY inside such a twin while the visible copy
+   * is split across sibling text nodes — badges inserted here never show.
+   * NOTE: `aria-hidden` deliberately does NOT count as hidden: that same
+   * pattern marks the *visible* copy `aria-hidden="true"`.
+   */
+  function hasHiddenClass(el) {
+    var cls = '';
+    try { cls = typeof el.className === 'string' ? el.className : (el.className && el.className.baseVal !== undefined ? el.className.baseVal : ''); } catch (_) { cls = ''; }
+    if (!cls) return false;
+    return /(?:^|\s)(sr-only|visually-hidden|visuallyhidden|screen-reader-only|v-hidden)(?:\s|$)/.test(cls);
+  }
+
+  function isVisuallyHiddenEl(el) {
+    if (!el || el.nodeType !== 1) return false;
+    if (el.hasAttribute && el.hasAttribute('hidden')) return true;
+    if (hasHiddenClass(el)) return true;
+    try {
+      var style = el.getAttribute ? el.getAttribute('style') : null;
+      if (style && /display\s*:\s*none/i.test(style)) return true;
+    } catch (_) { /* noop */ }
+    return false;
+  }
+
+  /**
+   * FIX-5: Stricter check used by the split-node joiner: an inline child
+   * whose text renders invisibly (Tailwind `invisible` alignment padding
+   * such as the comma/indent pads inserted between price digits) must not
+   * contribute characters to the joined amount string.
+   */
+  function isInvisibleForJoin(el) {
+    if (isVisuallyHiddenEl(el)) return true;
+    var cls = '';
+    try { cls = typeof el.className === 'string' ? el.className : (el.className && el.className.baseVal !== undefined ? el.className.baseVal : ''); } catch (_) { cls = ''; }
+    if (cls && /(?:^|\s)invisible(?:\s|$)/.test(cls)) return true;
+    try {
+      var style = el.getAttribute ? el.getAttribute('style') : null;
+      if (style && /visibility\s*:\s*hidden/i.test(style)) return true;
+    } catch (_) { /* noop */ }
+    return false;
+  }
+
   /** True when the node lives inside a tag we must never touch. */
   function isSkipped(node) {
     var el = node && node.nodeType === 1 ? node : (node && node.parentElement !== undefined && node.parentElement !== null ? node.parentElement : null);
@@ -82,6 +129,7 @@
         if (p.getAttribute && p.getAttribute('contenteditable') === 'true') return true;
         if (p.isContentEditable) return true;
         if (p.hasAttribute && p.hasAttribute(CONVERTED_ATTR)) return true;
+        if (isVisuallyHiddenEl(p)) return true;
         p = p.parentNode;
       }
       return false;
@@ -93,6 +141,7 @@
       if (cur.getAttribute && cur.getAttribute('contenteditable') === 'true') return true;
       if (cur.isContentEditable) return true;
       if (cur.hasAttribute && cur.hasAttribute(CONVERTED_ATTR)) return true;
+      if (isVisuallyHiddenEl(cur)) return true;
       cur = cur.parentNode;
     }
     return false;
@@ -301,6 +350,215 @@
   }
 
   /**
+   * FIX-5: Split-node amounts. React money components (Surplus Intelligence
+   * `<Money>`, many dashboards) render one visible amount as several
+   * sibling text nodes — `"$"` + `"0"` + `"."` + `"003375"` — padded with
+   * invisible alignment spans. No single text node matches the currency
+   * regex, so join consecutive inline siblings, detect on the joined
+   * string, and convert matches that span multiple nodes.
+   */
+  var CLUSTER_TAGS = Object.freeze(new Set([
+    'SPAN', 'B', 'I', 'EM', 'STRONG', 'SMALL', 'SUB', 'SUP',
+    'MARK', 'ABBR', 'TIME', 'DATA', 'FONT', 'U', 'S',
+  ]));
+  var CURRENCY_HINT_RE = /[$€£¥₹₩฿]|USD|EUR|GBP|JPY|CNY|KRW|CAD|AUD|SGD|INR|THB|TWD|HKD/;
+
+  /** Segments of one run: { domNode, text, start, end } over joined text. */
+  function buildRuns(parent) {
+    var runs = [];
+    var segments = [];
+    var joined = '';
+    function flush() {
+      if (segments.length > 0) runs.push({ segments: segments, text: joined });
+      segments = [];
+      joined = '';
+    }
+    function push(domNode, text) {
+      segments.push({ domNode: domNode, text: text, start: joined.length, end: joined.length + text.length });
+      joined += text;
+    }
+    var kids = parent.childNodes;
+    for (var i = 0; i < kids.length; i += 1) {
+      var kid = kids[i];
+      if (kid.nodeType === 8) continue; // React comment separators are transparent
+      if (kid.nodeType === 3) {
+        push(kid, kid.nodeValue || '');
+        continue;
+      }
+      if (kid.nodeType === 1) {
+        var tag = (kid.tagName || '').toUpperCase();
+        if (!CLUSTER_TAGS.has(tag) || (kid.children && kid.children.length > 0)) {
+          flush();
+          continue;
+        }
+        // Invisible padding (Tailwind `invisible` digit/comma pads) keeps
+        // its slot in the run but contributes no characters.
+        push(kid, isInvisibleForJoin(kid) ? '' : (kid.textContent || ''));
+        continue;
+      }
+      flush();
+    }
+    flush();
+    return runs;
+  }
+
+  function insertAfter(newNode, refNode) {
+    if (refNode && refNode.parentNode) refNode.parentNode.insertBefore(newNode, refNode.nextSibling);
+  }
+
+  /** Convert every multi-node match of one run. Returns converted count. */
+  function convertRun(parent, run, rates, mode, tableSafe) {
+    if (!run || !run.text || run.text.length > 120) return 0;
+    var nonEmpty = 0;
+    for (var s = 0; s < run.segments.length; s += 1) {
+      if (run.segments[s].text) nonEmpty += 1;
+    }
+    if (nonEmpty < 2 || !CURRENCY_HINT_RE.test(run.text)) return 0;
+    var matches = detectCurrencyAmounts(run.text);
+    if (matches.length === 0) return 0;
+
+    var doc = parent.ownerDocument;
+    if (!doc) return 0;
+    var plans = [];
+    for (var i = 0; i < matches.length; i += 1) {
+      var m = matches[i];
+      var mEnd = m.index + m.raw.length;
+      var touched = [];
+      for (var j = 0; j < run.segments.length; j += 1) {
+        var seg = run.segments[j];
+        if (seg.text && seg.end > m.index && seg.start < mEnd) touched.push(seg);
+      }
+      // A match inside a single node is convertTextNode's job (pass 1).
+      if (touched.length < 2) continue;
+      var vnd = vndFor(m, rates);
+      if (vnd == null) continue;
+      plans.push({ match: m, vnd: vnd, first: touched[0].domNode, last: touched[touched.length - 1].domNode });
+    }
+    if (plans.length === 0) return 0;
+
+    var converted = 0;
+    selfMutating = true;
+    try {
+      if (mode === 'append') {
+        var wantSubline = tableSafe && isInsideTable(parent);
+        if (wantSubline) {
+          var legs = [];
+          for (var a = 0; a < plans.length; a += 1) legs.push(formatVND(plans[a].vnd));
+          var sub = doc.createElement('span');
+          sub.setAttribute('class', 'vnd-subline');
+          sub.setAttribute(INSERTED_ATTR, '1');
+          sub.setAttribute('data-original', plans.map(function (p) { return p.match.raw; }).join(' / '));
+          sub.textContent = '≈ ' + legs.join(' / ');
+          insertAfter(sub, plans[plans.length - 1].last);
+          converted = plans.length;
+        } else {
+          for (var b = plans.length - 1; b >= 0; b -= 1) {
+            var badge = doc.createElement('span');
+            badge.setAttribute('class', 'vnd-badge');
+            badge.setAttribute(INSERTED_ATTR, '1');
+            badge.setAttribute('data-original', plans[b].match.raw);
+            badge.textContent = ' (≈ ' + formatVND(plans[b].vnd) + ')';
+            insertAfter(badge, plans[b].last);
+            converted += 1;
+          }
+        }
+        // Mark the run parent (not a wrapper): page DOM stays untouched,
+        // rescans skip it, restore just removes the inserted nodes.
+        parent.setAttribute(CONVERTED_ATTR, 'cluster');
+        parent.setAttribute(ORIGINAL_ATTR, run.text);
+      } else {
+        // hover / replace need an anchor element: wrap the exact node
+        // range of each match. hover wraps reversibly (unwrap restores
+        // the original split nodes verbatim); replace stores the joined
+        // visible text like convertTextNode does.
+        for (var c = plans.length - 1; c >= 0; c -= 1) {
+          var plan = plans[c];
+          var rangeNodes = [];
+          var curNode = plan.first;
+          while (curNode) {
+            rangeNodes.push(curNode);
+            if (curNode === plan.last) break;
+            curNode = curNode.nextSibling;
+          }
+          var wrap = doc.createElement('span');
+          wrap.setAttribute('class', CONVERTED_CLASS);
+          wrap.setAttribute(CONVERTED_ATTR, 'true');
+          wrap.setAttribute(ORIGINAL_ATTR, plan.match.raw);
+          parent.insertBefore(wrap, rangeNodes[0]);
+          if (mode === 'hover') {
+            wrap.setAttribute(UNWRAP_ATTR, '1');
+            var hov = doc.createElement('span');
+            hov.setAttribute('class', 'vnd-hover');
+            hov.setAttribute('data-original', plan.match.raw);
+            var rate = (rates || {})[plan.match.currency] !== undefined && (rates || {})[plan.match.currency] !== null
+              ? (rates || {})[plan.match.currency]
+              : DEFAULT_RATES[plan.match.currency];
+            hov.setAttribute('data-vnd-tooltip', '≈ ' + formatVND(plan.vnd) + ' (Tỷ giá: ' + formatRateBadge(rate) + ')');
+            for (var d = 0; d < rangeNodes.length; d += 1) hov.appendChild(rangeNodes[d]);
+            wrap.appendChild(hov);
+          } else {
+            var rep = doc.createElement('span');
+            rep.setAttribute('class', 'vnd-replace');
+            rep.setAttribute('data-original', plan.match.raw);
+            rep.setAttribute('title', 'Gốc: ' + plan.match.raw);
+            rep.textContent = formatVND(plan.vnd);
+            for (var e = 0; e < rangeNodes.length; e += 1) {
+              if (rangeNodes[e].parentNode) rangeNodes[e].parentNode.removeChild(rangeNodes[e]);
+            }
+            wrap.appendChild(rep);
+          }
+          converted += 1;
+        }
+      }
+    } finally {
+      selfMutating = false;
+    }
+    return converted;
+  }
+
+  /** FIX-5 pass 2: find amounts split across sibling nodes under root. */
+  function scanSplitAmounts(scanRoot, rates, mode, tableSafe) {
+    var count = 0;
+    var nodes = 0;
+    if (!scanRoot) return { count: 0, nodes: 0 };
+    var scope = scanRoot.nodeType === 9 ? scanRoot.documentElement : scanRoot;
+    if (!scope || !scope.querySelectorAll) return { count: 0, nodes: 0 };
+    var candidates = [];
+    if (scope.nodeType === 1 && scope.childNodes && scope.childNodes.length >= 2) {
+      candidates.push(scope);
+    }
+    var all = scope.querySelectorAll('*');
+    for (var i = 0; i < all.length; i += 1) {
+      var el = all[i];
+      var tag = (el.tagName || '').toUpperCase();
+      if (FORBIDDEN_TAGS.has(tag)) continue;
+      if (!el.childNodes || el.childNodes.length < 2 || el.childNodes.length > 24) continue;
+      var hasText = false;
+      for (var k = 0; k < el.childNodes.length; k += 1) {
+        if (el.childNodes[k].nodeType === 3 && (el.childNodes[k].nodeValue || '')) { hasText = true; break; }
+      }
+      if (hasText) candidates.push(el);
+    }
+    for (var c = 0; c < candidates.length; c += 1) {
+      var parent = candidates[c];
+      try {
+        if (!parent.parentNode && parent !== scope) continue;
+        if (isSkipped(parent)) continue;
+        var runs = buildRuns(parent);
+        var parentConverted = 0;
+        for (var r = 0; r < runs.length; r += 1) {
+          parentConverted += convertRun(parent, runs[r], rates, mode, tableSafe);
+        }
+        if (parentConverted > 0) {
+          count += parentConverted;
+          nodes += 1;
+        }
+      } catch (_) { /* one bad subtree must never break the page scan */ }
+    }
+    return { count: count, nodes: nodes };
+  }
+
+  /**
    * Scan a document/subtree and convert every currency amount.
    * Returns `{ count, nodes }`: converted amounts + wrapped nodes.
    */
@@ -335,6 +593,12 @@
         nodes += 1;
       }
     }
+    // FIX-5 pass 2: amounts split across sibling text/element nodes.
+    try {
+      var sp = scanSplitAmounts(scanRoot, rates, mode, tableSafe);
+      count += sp.count;
+      nodes += sp.nodes;
+    } catch (_) { /* noop */ }
     return { count: count, nodes: nodes };
   }
 
@@ -356,6 +620,32 @@
     selfMutating = true;
     try {
       els.forEach(function (el) {
+        // FIX-5 cluster mark: original DOM was never touched — drop the
+        // inserted badge/subline nodes and the mark itself.
+        if (el.getAttribute(CONVERTED_ATTR) === 'cluster') {
+          var inserted = el.querySelectorAll('[' + INSERTED_ATTR + ']');
+          inserted.forEach(function (n) {
+            if (n.parentNode) n.parentNode.removeChild(n);
+          });
+          el.removeAttribute(CONVERTED_ATTR);
+          el.removeAttribute(ORIGINAL_ATTR);
+          restored += 1;
+          return;
+        }
+        // FIX-5 hover wrap: unwrap (inner .vnd-hover first, then the
+        // wrapper) so the original split nodes return byte-for-byte
+        // instead of collapsing into one text node.
+        if (el.hasAttribute(UNWRAP_ATTR) && el.parentNode) {
+          var unwrapNode = function (n) {
+            while (n.firstChild) n.parentNode.insertBefore(n.firstChild, n);
+            n.parentNode.removeChild(n);
+          };
+          var inner = el.firstElementChild;
+          if (inner && inner.classList && inner.classList.contains('vnd-hover')) unwrapNode(inner);
+          unwrapNode(el);
+          restored += 1;
+          return;
+        }
         var original = el.getAttribute(ORIGINAL_ATTR);
         if (original == null) original = el.textContent;
         el.replaceWith(doc.createTextNode(original));
@@ -613,10 +903,12 @@
     DISPLAY_MODES: DISPLAY_MODES,
     DEFAULT_STATE: DEFAULT_STATE,
     isSkipped: isSkipped,
+    isVisuallyHiddenEl: isVisuallyHiddenEl,
     isInsideTable: isInsideTable,
     isTruncatedContext: isTruncatedContext,
     collectTextNodes: collectTextNodes,
     convertTextNode: convertTextNode,
+    scanSplitAmounts: scanSplitAmounts,
     scanAndConvert: scanAndConvert,
     restoreConverted: restoreConverted,
     rescan: rescan,
